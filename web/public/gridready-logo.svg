@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">GridReady AI Logo</title>
+  <desc id="desc">A modern navy circular G mark with a horizontal bar.</desc>
+  <path d="M80,30 C72,20 60,15 48,15 C28,15 12,31 12,51 C12,71 28,87 48,87 C65,87 80,75 84,58 L68,58 C65,66 57,72 48,72 C36,72 27,62 27,51 C27,40 36,30 48,30 C55,30 61,33 65,38 L80,30 Z" fill="#1B365D"/>
+  <rect x="55" y="48" width="30" height="6" rx="3" fill="#1B365D"/>
+</svg>
