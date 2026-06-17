@@ -9,6 +9,10 @@ import {
 } from "@/lib/address-autocomplete";
 
 type AddressAutocompleteFieldProps = {
+  badge?: string;
+  error?: string;
+  helpText?: string;
+  id?: string;
   label: string;
   onChange: (value: string) => void;
   onSelect: (suggestion: AddressSuggestion) => void;
@@ -16,7 +20,7 @@ type AddressAutocompleteFieldProps = {
 };
 
 const inputClass =
-  "h-11 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-[#1b365d] focus:ring-2 focus:ring-[#1b365d]/20";
+  "h-11 w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-brand-primary)] focus:ring-2 focus:ring-[var(--color-focus-ring)]";
 
 function secondaryLine(suggestion: AddressSuggestion) {
   return [suggestion.city, suggestion.county, suggestion.stateCode || suggestion.state, suggestion.postcode]
@@ -25,6 +29,10 @@ function secondaryLine(suggestion: AddressSuggestion) {
 }
 
 export function AddressAutocompleteField({
+  badge,
+  error,
+  helpText,
+  id,
   label,
   onChange,
   onSelect,
@@ -38,6 +46,12 @@ export function AddressAutocompleteField({
 
   const canSearch = hasAddressAutocompleteConfig && value.trim().length >= 3;
   const activeSuggestions = useMemo(() => (canSearch ? suggestions.slice(0, 5) : []), [canSearch, suggestions]);
+  const inputId = id ?? label.toLowerCase().replace(/\s+/g, "-");
+  const describedBy = [
+    error ? `${inputId}-error` : "",
+    helpText ? `${inputId}-help` : "",
+    lookupError ? `${inputId}-lookup-error` : "",
+  ].filter(Boolean).join(" ") || undefined;
 
   useEffect(() => {
     if (!canSearch) {
@@ -88,10 +102,18 @@ export function AddressAutocompleteField({
 
   return (
     <label className="relative block min-w-0 sm:col-span-2">
-      <span className="mb-1.5 block text-sm font-semibold text-slate-700">{label}</span>
+      <span className="mb-1.5 flex min-h-5 flex-wrap items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
+        <span>{label}</span>
+        {badge ? (
+          <span className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--color-success)]">
+            {badge}
+          </span>
+        ) : null}
+      </span>
       <span className="relative block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]" size={16} />
         <input
+          id={inputId}
           value={value}
           onBlur={() => {
             blurTimerRef.current = setTimeout(() => setOpen(false), 120);
@@ -116,29 +138,31 @@ export function AddressAutocompleteField({
             }
           }}
           autoComplete="street-address"
-          className={`${inputClass} pl-9 pr-10`}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
+          className={`${inputClass} pl-9 pr-10 ${error ? "border-rose-300 focus:border-rose-500 focus:ring-rose-500/20" : ""}`}
         />
         {loading ? (
-          <Loader2 className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400" size={16} />
+          <Loader2 className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-[var(--color-text-secondary)]" size={16} />
         ) : null}
       </span>
 
       {open && activeSuggestions.length > 0 ? (
-        <div className="absolute left-0 right-0 top-[72px] z-30 overflow-hidden rounded-md border border-slate-200 bg-white shadow-xl">
+        <div className="absolute left-0 right-0 top-[72px] z-30 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl shadow-[var(--color-shadow)]">
           {activeSuggestions.map((suggestion) => (
             <button
               key={suggestion.id}
               type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => handleSelect(suggestion)}
-              className="flex w-full items-start gap-3 border-b border-slate-100 px-3 py-3 text-left transition last:border-b-0 hover:bg-[#f8faf7] focus:bg-[#f8faf7] focus:outline-none"
+              className="flex w-full items-start gap-3 border-b border-[var(--color-border)] px-3 py-3 text-left transition last:border-b-0 hover:bg-[var(--color-surface-muted)] focus:bg-[var(--color-surface-muted)] focus:outline-none"
             >
-              <MapPin className="mt-0.5 shrink-0 text-[#1b365d]" size={16} />
+              <MapPin className="mt-0.5 shrink-0 text-[var(--color-brand-primary)]" size={16} />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-slate-900">
+                <span className="block truncate text-sm font-semibold text-[var(--color-text-primary)]">
                   {suggestion.addressLine1 || suggestion.formattedAddress}
                 </span>
-                <span className="mt-0.5 block truncate text-xs text-slate-500">
+                <span className="mt-0.5 block truncate text-xs text-[var(--color-text-secondary)]">
                   {secondaryLine(suggestion) || suggestion.formattedAddress}
                 </span>
               </span>
@@ -147,8 +171,15 @@ export function AddressAutocompleteField({
         </div>
       ) : null}
 
+      {helpText ? <span id={`${inputId}-help`} className="mt-1.5 block text-xs leading-5 text-[var(--color-text-secondary)]">{helpText}</span> : null}
+      {error ? (
+        <span id={`${inputId}-error`} className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-rose-700">
+          <AlertCircle size={14} />
+          {error}
+        </span>
+      ) : null}
       {lookupError ? (
-        <span className="mt-2 flex items-center gap-2 text-xs font-medium text-amber-700">
+        <span id={`${inputId}-lookup-error`} className="mt-2 flex items-center gap-2 text-xs font-medium text-amber-700">
           <AlertCircle size={14} />
           {lookupError}
         </span>

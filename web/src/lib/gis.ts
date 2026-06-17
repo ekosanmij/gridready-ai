@@ -22,6 +22,35 @@ export const mapRadiusMiles = [1, 5, 10, 25, 50] as const;
 export type GridAssetType = (typeof gridAssetTypes)[number]["value"];
 export type ConfidenceLevel = (typeof confidenceLevels)[number]["value"];
 
+export const osmFallbackMapStyle = {
+  version: 8 as const,
+  sources: {
+    osm: {
+      type: "raster" as const,
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
+  },
+  layers: [
+    {
+      id: "osm",
+      type: "raster" as const,
+      source: "osm",
+    },
+  ],
+};
+
+export const configuredMapLayerSources = {
+  environmentalConstraints: process.env.NEXT_PUBLIC_ENV_CONSTRAINT_LAYER_SOURCE_URL ?? "",
+  grid: process.env.NEXT_PUBLIC_GRID_LAYER_SOURCE_URL ?? "",
+  parcels: process.env.NEXT_PUBLIC_PARCEL_LAYER_SOURCE_URL ?? "",
+};
+
+export function getMapStyle() {
+  return process.env.NEXT_PUBLIC_MAP_STYLE_URL || osmFallbackMapStyle;
+}
+
 export type GridAssetDraft = {
   analystNotes: string;
   assetName: string;
@@ -170,6 +199,10 @@ export function formatDistanceMiles(value: number | null | undefined) {
   }
 
   return `${Math.round(value)} mi`;
+}
+
+export function externalMapUrl(latitude: number, longitude: number) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
 }
 
 export function createRadiusFeatureCollection(latitude: number, longitude: number): RadiusFeatureCollection {

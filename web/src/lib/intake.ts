@@ -81,6 +81,8 @@ export type AssessmentFormState = {
   confidentialityStatus: string;
 };
 
+export type AssessmentFieldValidationMap = Partial<Record<keyof AssessmentFormState, string>>;
+
 export const blankAssessmentForm: AssessmentFormState = {
   organisationId: "",
   organisationName: "",
@@ -201,20 +203,52 @@ function validateCoordinate(value: string, label: string, minimum: number, maxim
   return null;
 }
 
-export function validateAssessmentForm(form: AssessmentFormState) {
-  const errors = [
-    validateNumberField(form.targetLoadMw, "Target load MW", 0.01),
-    validateNumberField(form.initialLoadMw, "Initial phase MW", 0),
-    validateNumberField(form.fullBuildoutLoadMw, "Full buildout MW", 0),
-    validateCoordinate(form.latitude, "Latitude", -90, 90),
-    validateCoordinate(form.longitude, "Longitude", -180, 180),
-  ].filter((error): error is string => Boolean(error));
+export function isValidContactEmail(value: string) {
+  const trimmed = value.trim();
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
+export function getCoreAssessmentFieldValidationState(form: AssessmentFormState): AssessmentFieldValidationMap {
+  const errors: AssessmentFieldValidationMap = {};
+
+  const targetLoadError = validateNumberField(form.targetLoadMw, "Target load MW", 0.01);
+  const initialLoadError = validateNumberField(form.initialLoadMw, "Initial phase MW", 0);
+  const fullBuildoutError = validateNumberField(form.fullBuildoutLoadMw, "Full buildout MW", 0);
+  const latitudeError = validateCoordinate(form.latitude, "Latitude", -90, 90);
+  const longitudeError = validateCoordinate(form.longitude, "Longitude", -180, 180);
+
+  if (targetLoadError) {
+    errors.targetLoadMw = targetLoadError;
+  }
+
+  if (initialLoadError) {
+    errors.initialLoadMw = initialLoadError;
+  }
+
+  if (fullBuildoutError) {
+    errors.fullBuildoutLoadMw = fullBuildoutError;
+  }
+
+  if (latitudeError) {
+    errors.latitude = latitudeError;
+  }
+
+  if (longitudeError) {
+    errors.longitude = longitudeError;
+  }
 
   if ((hasValue(form.latitude) && !hasValue(form.longitude)) || (!hasValue(form.latitude) && hasValue(form.longitude))) {
-    errors.push("Enter both latitude and longitude, or leave both blank and use the address.");
+    const message = "Enter both latitude and longitude, or leave both blank and use the address.";
+    errors.latitude = errors.latitude ?? message;
+    errors.longitude = errors.longitude ?? message;
   }
 
   return errors;
+}
+
+export function validateAssessmentForm(form: AssessmentFormState) {
+  return Object.values(getCoreAssessmentFieldValidationState(form));
 }
 
 export function calculateCompletenessScore(form: AssessmentFormState) {
