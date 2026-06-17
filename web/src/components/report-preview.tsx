@@ -33,6 +33,7 @@ import {
   reportExportStatusLabel,
   reportSectionStatusLabel,
 } from "@/lib/report-builder";
+import { StatusPill, primaryButtonClass, secondaryButtonClass } from "@/components/ui-primitives";
 
 type OrganisationRecord = {
   id: string;
@@ -159,7 +160,7 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f5f7f2] text-slate-700">
+      <main className="flex min-h-screen items-center justify-center bg-[var(--background)] text-slate-700">
         <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <Loader2 className="animate-spin" size={18} />
           Loading report preview
@@ -170,13 +171,13 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
 
   if (error || !state) {
     return (
-      <main className="min-h-screen bg-[#f5f7f2] px-6 py-10 text-slate-950">
+      <main className="min-h-screen bg-[var(--background)] px-6 py-10 text-slate-950">
         <div className="mx-auto max-w-3xl rounded-lg border border-rose-200 bg-white p-5 shadow-sm">
           <div className="flex items-start gap-3 text-rose-800">
             <AlertCircle className="mt-0.5 shrink-0" size={18} />
             <p>{error || "Report preview could not be loaded."}</p>
           </div>
-          <Link href="/intake" className="mt-4 inline-flex text-sm font-semibold text-[#1b365d]">
+          <Link href="/intake" className="mt-4 inline-flex text-sm font-semibold text-[var(--color-brand-primary)]">
             Back to intake
           </Link>
         </div>
@@ -191,12 +192,12 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
   const scoresByModule = new Map(state.scores.map((score) => [score.module_key, score]));
 
   return (
-    <main className="min-h-screen bg-[#f5f7f2] px-4 py-5 text-slate-950 print:bg-white print:px-0 print:py-0">
+    <main className="min-h-screen bg-[var(--background)] px-4 py-5 text-slate-950 print:bg-white print:px-0 print:py-0">
       <div className="mx-auto max-w-5xl print:max-w-none">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3 print:hidden">
           <Link
             href="/intake"
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm"
+            className={secondaryButtonClass}
           >
             <ArrowLeft size={16} />
             Back to intake
@@ -204,7 +205,7 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-[#1b365d] px-3 text-sm font-semibold text-white shadow-sm"
+            className={primaryButtonClass}
           >
             <Printer size={16} />
             Print
@@ -213,8 +214,8 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
 
         <article className="bg-white p-8 shadow-sm print:p-8 print:shadow-none">
           <header className="border-b border-slate-200 pb-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#1b365d]">GridReady AI draft package</p>
-            <h1 className="mt-2 text-3xl font-semibold text-[#10243f]">{state.assessment.assessment_name}</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-brand-primary)]">GridReady AI draft package</p>
+            <h1 className="mt-2 text-3xl font-semibold text-[var(--color-text-primary)]">{state.assessment.assessment_name}</h1>
             <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
               <MetaLine label="Customer" value={organisation?.name ?? "Evidence pending"} />
               <MetaLine label="Project" value={project?.name ?? "Evidence pending"} />
@@ -268,16 +269,14 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
                 return (
                   <section key={templateSection.id} className="break-inside-avoid border-t border-slate-200 pt-5 first:border-t-0 first:pt-0">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-semibold text-[#10243f]">{templateSection.title}</h3>
+                      <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">{templateSection.title}</h3>
                       {savedSection ? (
                         <span className="rounded border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
                           {reportSectionStatusLabel(savedSection.status)}
                         </span>
                       ) : null}
                       {savedSection?.is_edited ? (
-                        <span className="rounded border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-[#1b365d]">
-                          Edited
-                        </span>
+                        <StatusPill tone="info" className="py-0.5">Edited</StatusPill>
                       ) : null}
                     </div>
                     <p className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
@@ -296,7 +295,7 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
 
                 return (
                   <div key={module.value} className="break-inside-avoid rounded-lg border border-slate-200 p-3">
-                    <h3 className="text-sm font-semibold text-[#10243f]">{module.label}</h3>
+                    <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{module.label}</h3>
                     <p className="mt-1 text-sm text-slate-700">{score ? `${score.score}/100` : "Evidence pending"}</p>
                     <p className="mt-2 text-xs text-slate-600">
                       Risk: {score ? riskLevelLabel(score.risk_level) : "Evidence pending"}; confidence:{" "}
@@ -322,7 +321,7 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
                   return (
                     <div key={finding.id} className="break-inside-avoid rounded-lg border border-slate-200 p-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold text-[#10243f]">{finding.title}</h3>
+                        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{finding.title}</h3>
                         <span className="rounded border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
                           {findingModuleLabel(finding.module_key)}
                         </span>
@@ -700,7 +699,7 @@ async function loadChecklistSummary(
 function PreviewBlock({ children, title }: { children: ReactNode; title: string }) {
   return (
     <div className="break-inside-avoid rounded-lg border border-slate-200 p-3">
-      <h2 className="text-xs font-semibold uppercase text-[#1b365d]">{title}</h2>
+      <h2 className="text-xs font-semibold uppercase text-[var(--color-brand-primary)]">{title}</h2>
       <div className="mt-2 text-sm leading-6 text-slate-800">{children}</div>
     </div>
   );
@@ -709,7 +708,7 @@ function PreviewBlock({ children, title }: { children: ReactNode; title: string 
 function ReportSection({ children, title }: { children: ReactNode; title: string }) {
   return (
     <section className="mt-8 break-inside-avoid">
-      <h2 className="mb-3 border-b border-slate-200 pb-2 text-xl font-semibold text-[#10243f]">{title}</h2>
+      <h2 className="mb-3 border-b border-slate-200 pb-2 text-xl font-semibold text-[var(--color-text-primary)]">{title}</h2>
       {children}
     </section>
   );

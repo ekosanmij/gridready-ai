@@ -1,10 +1,77 @@
 @import "maplibre-gl/dist/maplibre-gl.css";
 @import "tailwindcss";
 
-:root {
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
   --background: #f5f7f2;
   --foreground: #0f172a;
   --brand-navy: #1b365d;
+  --color-brand-primary: #1b365d;
+  --color-brand-primary-hover: #142844;
+  --color-brand-primary-contrast: #ffffff;
+  --color-brand-primary-soft: #e8eef4;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8faf7;
+  --color-surface-strong: #eef3ef;
+  --color-border: #d8e0d2;
+  --color-focus-ring: rgba(27, 54, 93, 0.24);
+  --color-shadow: 0 18px 45px rgba(16, 36, 63, 0.12);
+  --color-text-primary: #10243f;
+  --color-text-secondary: #526173;
+  --color-success: #147d4f;
+  --color-success-contrast: #ffffff;
+  --color-success-soft: #e8f5ee;
+  --color-warning: #b7791f;
+  --color-warning-soft: #fff4d8;
+  --color-danger: #c2410c;
+  --color-danger-soft: #fff0e8;
+  --color-info: #0f6b8f;
+  --color-info-soft: #e5f4f8;
+  --color-map-site: #1b365d;
+  --color-map-asset: #059669;
+  --color-map-candidate: #d97706;
+  --color-map-control-surface: rgba(255, 255, 255, 0.94);
+  --color-map-control-text: #334155;
+  --color-map-control-strong: #0f172a;
+  --color-map-canvas: #eef3ef;
+  --color-focus-ring: rgba(27, 54, 93, 0.25);
+  --color-shadow: rgba(15, 23, 42, 0.1);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #101915;
+  --foreground: #ecf4ee;
+  --brand-navy: #8fb7e8;
+  --color-brand-primary: #8fb7e8;
+  --color-brand-primary-hover: #bad6f4;
+  --color-brand-primary-contrast: #10243f;
+  --color-brand-primary-soft: #18334f;
+  --color-surface: #16231d;
+  --color-surface-muted: #1d2c24;
+  --color-surface-strong: #25362c;
+  --color-border: #3a4d41;
+  --color-text-primary: #f4f8f5;
+  --color-text-secondary: #b5c4ba;
+  --color-success: #6ee7a8;
+  --color-success-contrast: #102017;
+  --color-success-soft: #123728;
+  --color-warning: #f6c96f;
+  --color-warning-soft: #3c2f18;
+  --color-danger: #f39b78;
+  --color-danger-soft: #3f2119;
+  --color-info: #7dd3fc;
+  --color-info-soft: #133141;
+  --color-map-site: #8fb7e8;
+  --color-map-asset: #34d399;
+  --color-map-candidate: #fbbf24;
+  --color-map-control-surface: rgba(22, 35, 29, 0.94);
+  --color-map-control-text: #d8e4dc;
+  --color-map-control-strong: #f4f8f5;
+  --color-map-canvas: #1d2c24;
+  --color-focus-ring: rgba(143, 183, 232, 0.38);
+  --color-shadow: rgba(0, 0, 0, 0.34);
 }
 
 @theme inline {
@@ -21,6 +88,11 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+::selection {
+  background: var(--color-brand-primary-soft);
+  color: var(--color-text-primary);
+}
+
 button,
 input,
 select,
@@ -30,4 +102,27 @@ textarea {
 
 html {
   scroll-behavior: smooth;
+}
+
+.maplibregl-popup-content {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 12px 28px var(--color-shadow);
+  color: var(--color-text-primary);
+}
+
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--color-surface);
+}
+
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--color-surface);
+}
+
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--color-surface);
+}
+
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--color-surface);
 }
