@@ -18,6 +18,17 @@ create table if not exists public.profiles (
   updated_at timestamptz not null default now()
 );
 
+-- The deployed project may already have a smaller profiles table. CREATE TABLE
+-- IF NOT EXISTS does not add missing columns, so upgrade that table explicitly.
+-- Keep a pre-existing text role column compatible; current_app_role normalises it.
+alter table public.profiles
+  add column if not exists organisation_id uuid references public.organisations(id) on delete set null,
+  add column if not exists full_name text,
+  add column if not exists role public.app_role not null default 'customer',
+  add column if not exists is_active boolean not null default true,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
 create index if not exists profiles_organisation_role_idx
   on public.profiles (organisation_id, role)
   where is_active;
@@ -42,7 +53,7 @@ create trigger auth_user_created_profile
   for each row execute function public.handle_new_auth_user();
 
 insert into public.profiles (id, full_name, role)
-select u.id, nullif(u.raw_user_meta_data ->> 'full_name', ''), 'customer'::public.app_role
+select u.id, nullif(u.raw_user_meta_data ->> 'full_name', ''), 'customer'
 from auth.users u
 on conflict (id) do nothing;
 
@@ -65,7 +76,22 @@ security definer
 set search_path = public
 set row_security = off
 as $$
-  select coalesce((select p.role from public.profiles p where p.id = auth.uid() and p.is_active), 'customer'::public.app_role);
+  select case
+    when role_text in ('admin', 'analyst', 'reviewer', 'customer')
+      then role_text::public.app_role
+    else 'customer'::public.app_role
+  end
+  from (
+    select lower(coalesce(
+      (
+        select p.role::text
+        from public.profiles p
+        where p.id = auth.uid()
+          and p.is_active
+      ),
+      'customer'
+    )) as role_text
+  ) normalised_role;
 $$;
 
 create or replace function public.is_internal_user()
