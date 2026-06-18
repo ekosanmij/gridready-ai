@@ -228,7 +228,8 @@ returns table (
 language sql
 stable
 security invoker
-set search_path = public
+-- Supabase installs PostGIS in the extensions schema.
+set search_path = public, extensions
 as $$
   select t.utility_name, t.tsp_name, t.confidence_level, t.source_name, t.source_url
   from public.utility_service_territories t

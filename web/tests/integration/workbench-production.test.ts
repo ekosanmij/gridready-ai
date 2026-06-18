@@ -46,6 +46,7 @@ describe("production workbench integration contracts", () => {
     expect(migration).toContain("create or replace function public.can_access_assessment");
     expect(migration).toContain("assessment-evidence");
     expect(migration).toContain("using gist (boundary)");
+    expect(migration).toContain("set search_path = public, extensions");
     expect(migration).toContain("using gin (search_vector)");
     expect(migration).toContain("create or replace function public.search_portal");
     expect(migration).not.toContain("to anon, authenticated");
