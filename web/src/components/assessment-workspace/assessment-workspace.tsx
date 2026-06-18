@@ -1,0 +1,910 @@
+"use client";
+
+import {
+  Activity,
+  AlertCircle,
+  BarChart3,
+  ClipboardList,
+  FileText,
+  Gauge,
+  Loader2,
+  MapPin,
+  ShieldCheck,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ReactNode, useEffect, useState } from "react";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  DrawerSurface,
+  MetricTile,
+  SegmentedControl,
+  SplitPane,
+  StatusPill,
+  Timeline,
+  WorkItemPanel,
+  cx,
+  panelClass,
+  secondaryButtonClass,
+} from "@/components/ui-primitives";
+import {
+  ActivityItem,
+  AssessmentDetailRecord,
+  AssessmentWorkspaceData,
+  ContactRecord,
+  FileRecord,
+  NoteRecord,
+  StatusHistoryRecord,
+  WorkspaceModuleId,
+  buildActivityItems,
+  buildDuplicateSignals,
+  buildSmartSignals,
+  buildWorkspaceData,
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  getLifecycleFacts,
+  getOrganisation,
+  getProject,
+  getSite,
+  lifecycleTone,
+  workspaceModules,
+} from "@/lib/assessment-workspace";
+import {
+  AssessmentFindingRecord,
+  EvidenceSourceRecord,
+  FindingEvidenceLinkRecord,
+  evidenceConfidenceLabel,
+  evidenceSourceTypeLabel,
+  findingModuleLabel,
+  findingStatusLabel,
+  riskLevelLabel,
+} from "@/lib/evidence";
+import { GridAssetRecord, formatDistanceMiles, gridAssetTypeLabel } from "@/lib/gis";
+import { statusLabel } from "@/lib/intake";
+import {
+  AssessmentReportExportRecord,
+  AssessmentReportSectionRecord,
+  reportExportStatusLabel,
+  reportSectionStatusLabel,
+} from "@/lib/report-builder";
+import {
+  AssessmentScoreRecord,
+  AssessmentVerdictRecord,
+  ExpertReviewRecord,
+  calculateDeliveryGates,
+  countCriticalFindings,
+  countEvidenceGaps,
+  detectExpertReviewTriggers,
+  deliveryGatesAreComplete,
+  deliveryGateTone,
+  reviewStatusLabel,
+  scoreModuleLabel,
+  scoreTone,
+  verdictLabel,
+} from "@/lib/scorecard";
+import { hasSupabaseConfig, supabase } from "@/lib/supabase";
+
+type WorkspaceRole = "analyst" | "customer";
+
+const moduleIcons: Record<WorkspaceModuleId, ReactNode> = {
+  activity: <Activity size={16} />,
+  evidence: <ShieldCheck size={16} />,
+  findings: <AlertCircle size={16} />,
+  intake: <ClipboardList size={16} />,
+  overview: <Gauge size={16} />,
+  report: <FileText size={16} />,
+  scorecard: <BarChart3 size={16} />,
+  "site-grid": <MapPin size={16} />,
+};
+
+export function AssessmentWorkspace({
+  assessmentId,
+  initialRole = "analyst",
+  roleLocked = false,
+}: {
+  assessmentId: string;
+  initialRole?: WorkspaceRole;
+  roleLocked?: boolean;
+}) {
+  const [data, setData] = useState<AssessmentWorkspaceData | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<WorkspaceRole>(initialRole);
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const requestedModule = searchParams.get("module") as WorkspaceModuleId | null;
+  const activeModule = workspaceModules.some((module) => module.id === requestedModule) ? requestedModule ?? "overview" : "overview";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkspace() {
+      if (!hasSupabaseConfig || !supabase) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+
+      try {
+        const { data: assessmentData, error: assessmentError } = await supabase
+          .from("site_assessments")
+          .select(`
+            *,
+            sites (*),
+            projects (
+              *,
+              organisations (*)
+            )
+          `)
+          .eq("id", assessmentId)
+          .single();
+
+        if (assessmentError) {
+          throw assessmentError;
+        }
+
+        const assessment = assessmentData as AssessmentDetailRecord;
+        const project = getProject(assessment);
+        let contact: ContactRecord | null = null;
+
+        if (project?.lead_contact_id) {
+          const { data: contactData } = await supabase
+            .from("contacts")
+            .select("*")
+            .eq("id", project.lead_contact_id)
+            .maybeSingle();
+
+          contact = (contactData as ContactRecord | null) ?? null;
+        }
+
+        const [
+          { data: noteData, error: noteError },
+          { data: fileData, error: fileError },
+          { data: gridAssetData, error: gridError },
+          { data: sourceData, error: sourceError },
+          { data: findingData, error: findingError },
+          { data: scoreData, error: scoreError },
+          { data: verdictData, error: verdictError },
+          { data: reviewData, error: reviewError },
+          { data: sectionData, error: sectionError },
+          { data: exportData, error: exportError },
+          { data: statusHistoryData, error: statusHistoryError },
+          { data: duplicateCandidateData, error: duplicateError },
+        ] = await Promise.all([
+          supabase
+            .from("assessment_notes")
+            .select("id, note_type, body, is_internal, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("uploaded_files")
+            .select("id, file_name, document_category, storage_path, description, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("assessment_grid_assets")
+            .select("id, site_assessment_id, site_id, asset_name, asset_type, latitude, longitude, voltage_kv, owner_operator, source, confidence_level, is_candidate_poi, rationale, analyst_notes, distance_miles, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("distance_miles", { ascending: true }),
+          supabase
+            .from("evidence_sources")
+            .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, summary, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("assessment_findings")
+            .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("assessment_scores")
+            .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("module_key", { ascending: true }),
+          supabase
+            .from("assessment_verdicts")
+            .select("id, site_assessment_id, verdict, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .maybeSingle(),
+          supabase
+            .from("expert_reviews")
+            .select("id, site_assessment_id, review_type, reviewer_name, status, trigger_reason, comments, required_changes, approved_at, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from("assessment_report_sections")
+            .select("id, site_assessment_id, template_section_id, section_key, title, content, status, is_edited, generated_at, generation_notes, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("updated_at", { ascending: false }),
+          supabase
+            .from("assessment_report_exports")
+            .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("updated_at", { ascending: false })
+            .limit(1),
+          supabase
+            .from("status_history")
+            .select("id, from_status, to_status, reason, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("site_assessments")
+            .select(`
+              *,
+              sites (*),
+              projects (
+                *,
+                organisations (*)
+              )
+            `)
+            .order("updated_at", { ascending: false })
+            .limit(100),
+        ]);
+
+        if (
+          noteError ||
+          fileError ||
+          gridError ||
+          sourceError ||
+          findingError ||
+          scoreError ||
+          verdictError ||
+          reviewError ||
+          sectionError ||
+          exportError ||
+          statusHistoryError ||
+          duplicateError
+        ) {
+          throw (
+            noteError ??
+            fileError ??
+            gridError ??
+            sourceError ??
+            findingError ??
+            scoreError ??
+            verdictError ??
+            reviewError ??
+            sectionError ??
+            exportError ??
+            statusHistoryError ??
+            duplicateError
+          );
+        }
+
+        const findings = (findingData ?? []) as AssessmentFindingRecord[];
+        let links: FindingEvidenceLinkRecord[] = [];
+
+        if (findings.length > 0) {
+          const { data: linkData, error: linkError } = await supabase
+            .from("finding_evidence_links")
+            .select("id, finding_id, evidence_source_id, link_note, created_at")
+            .in("finding_id", findings.map((finding) => finding.id))
+            .order("created_at", { ascending: false });
+
+          if (linkError) {
+            throw linkError;
+          }
+
+          links = (linkData ?? []) as FindingEvidenceLinkRecord[];
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        const assessmentWithContact = { ...assessment, contact };
+        const workspaceData = buildWorkspaceData({
+          assessment: assessmentWithContact,
+          duplicateSignals: buildDuplicateSignals(assessmentWithContact, (duplicateCandidateData ?? []) as AssessmentDetailRecord[]),
+          evidenceLinks: links,
+          evidenceSources: (sourceData ?? []) as EvidenceSourceRecord[],
+          expertReview: (reviewData as ExpertReviewRecord | null) ?? null,
+          files: (fileData ?? []) as FileRecord[],
+          findings,
+          gridAssets: (gridAssetData ?? []) as GridAssetRecord[],
+          notes: (noteData ?? []) as NoteRecord[],
+          reportExport: (((exportData ?? []) as AssessmentReportExportRecord[])[0] as AssessmentReportExportRecord | undefined) ?? null,
+          reportSections: (sectionData ?? []) as AssessmentReportSectionRecord[],
+          scores: (scoreData ?? []) as AssessmentScoreRecord[],
+          statusHistory: (statusHistoryData ?? []) as StatusHistoryRecord[],
+          verdict: (verdictData as AssessmentVerdictRecord | null) ?? null,
+        });
+
+        setData(workspaceData);
+      } catch (loadError) {
+        if (!cancelled) {
+          setData(null);
+          setError(loadError instanceof Error ? loadError.message : "Could not load assessment workspace.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadWorkspace();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assessmentId]);
+
+  function selectModule(moduleId: WorkspaceModuleId) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("module", moduleId);
+    router.push(`${pathname}?${params.toString()}`);
+  }
+
+  if (!hasSupabaseConfig) {
+    return (
+      <EmptyState
+        icon={<AlertCircle size={20} />}
+        title="Supabase connection needed"
+        description="Configure Supabase to open the decomposed assessment workspace."
+        action={<Link href="/intake/workspace" className={secondaryButtonClass}>Open existing console</Link>}
+      />
+    );
+  }
+
+  if (loading) {
+    return (
+      <section className={cx(panelClass, "px-5 py-10 text-center text-sm text-[var(--color-text-secondary)]")}>
+        <Loader2 className="mx-auto mb-3 animate-spin text-[var(--color-brand-primary)]" size={22} />
+        Loading assessment workspace
+      </section>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <EmptyState
+        icon={<AlertCircle size={20} />}
+        title="Workspace could not be loaded"
+        description={error || "This assessment was not found."}
+        action={<Link href="/intake/assessments" className={secondaryButtonClass}>Back to queue</Link>}
+      />
+    );
+  }
+
+  const lifecycle = getLifecycleFacts(data.assessment);
+  const site = getSite(data.assessment);
+  const project = getProject(data.assessment);
+  const organisation = getOrganisation(data.assessment);
+  const smartSignals = buildSmartSignals(data);
+  const activityItems = buildActivityItems(data);
+
+  return (
+    <div className="space-y-5">
+      <section className={cx(panelClass, "overflow-hidden")}>
+        <div className="grid gap-5 border-b border-[var(--color-border)] px-5 py-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="min-w-0">
+            <div className="mb-3 flex flex-wrap gap-2">
+              <StatusPill tone={lifecycleTone(data.assessment.status)}>{lifecycle.customerLabel}</StatusPill>
+              <StatusPill tone="neutral">{statusLabel(data.assessment.status)}</StatusPill>
+              <StatusPill tone={data.assessment.intake_completeness_score >= 100 ? "success" : "warning"}>
+                {data.assessment.intake_completeness_score}% intake
+              </StatusPill>
+            </div>
+            <h2 className="text-2xl font-semibold text-[var(--color-text-primary)]">{data.assessment.assessment_name}</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+              {organisation?.name ?? "Unassigned customer"} · {project?.name ?? "No project"} · {site?.site_name ?? "No site"}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {roleLocked ? (
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-secondary)]">Workspace role</p>
+                <div className="mt-2">
+                  <StatusPill tone={role === "customer" ? "info" : "brand"}>
+                    {role === "customer" ? "Customer view" : "Analyst view"}
+                  </StatusPill>
+                </div>
+              </div>
+            ) : (
+              <SegmentedControl<WorkspaceRole>
+                label="Workspace role"
+                onChange={setRole}
+                options={[
+                  { label: "Analyst", value: "analyst" },
+                  { label: "Customer", value: "customer" },
+                ]}
+                value={role}
+              />
+            )}
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-secondary)]">Current owner</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">{lifecycle.owner}</p>
+              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Target: {lifecycle.slaLabel}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border-b border-[var(--color-border)] px-3 py-2">
+          <div className="flex min-w-max gap-1">
+            {workspaceModules.map((module) => {
+              const selected = activeModule === module.id;
+
+              return (
+                <button
+                  key={module.id}
+                  type="button"
+                  onClick={() => selectModule(module.id)}
+                  className={cx(
+                    "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]",
+                    selected
+                      ? "bg-[var(--color-brand-primary-soft)] text-[var(--color-brand-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-text-primary)]",
+                  )}
+                >
+                  {moduleIcons[module.id]}
+                  {module.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <SplitPane
+        aside={
+          <ContextRail
+            activityItems={activityItems}
+            data={data}
+            lifecycle={lifecycle}
+            role={role}
+            smartSignals={smartSignals}
+          />
+        }
+      >
+        <ModuleContent activeModule={activeModule} data={data} role={role} smartSignals={smartSignals} />
+      </SplitPane>
+    </div>
+  );
+}
+
+function ModuleContent({
+  activeModule,
+  data,
+  role,
+  smartSignals,
+}: {
+  activeModule: WorkspaceModuleId;
+  data: AssessmentWorkspaceData;
+  role: WorkspaceRole;
+  smartSignals: ReturnType<typeof buildSmartSignals>;
+}) {
+  switch (activeModule) {
+    case "activity":
+      return <ActivityModule data={data} role={role} />;
+    case "evidence":
+      return <EvidenceModule data={data} />;
+    case "findings":
+      return <FindingsModule data={data} />;
+    case "intake":
+      return <IntakeModule data={data} role={role} />;
+    case "report":
+      return <ReportModule data={data} />;
+    case "scorecard":
+      return <ScorecardModule data={data} role={role} />;
+    case "site-grid":
+      return <SiteGridModule data={data} />;
+    case "overview":
+    default:
+      return <OverviewModule data={data} role={role} smartSignals={smartSignals} />;
+  }
+}
+
+function ContextRail({
+  activityItems,
+  data,
+  lifecycle,
+  role,
+  smartSignals,
+}: {
+  activityItems: ActivityItem[];
+  data: AssessmentWorkspaceData;
+  lifecycle: ReturnType<typeof getLifecycleFacts>;
+  role: WorkspaceRole;
+  smartSignals: ReturnType<typeof buildSmartSignals>;
+}) {
+  return (
+    <div className="space-y-4">
+      <WorkItemPanel
+        eyebrow={role === "customer" ? "Customer view" : "Analyst view"}
+        title={lifecycle.customerLabel}
+        description={lifecycle.description}
+        tone={lifecycleTone(data.assessment.status)}
+      >
+        <div className="space-y-3">
+          <div>
+            <div className="mb-1 flex justify-between text-xs font-semibold text-[var(--color-text-secondary)]">
+              <span>Lifecycle</span>
+              <span>{lifecycle.progress}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-md bg-[var(--color-surface-strong)]">
+              <div className="h-full rounded-md bg-[var(--color-brand-primary)]" style={{ width: `${lifecycle.progress}%` }} />
+            </div>
+          </div>
+          <Fact label="Owner" value={lifecycle.owner} />
+          <Fact label="SLA target" value={lifecycle.slaLabel} />
+        </div>
+      </WorkItemPanel>
+
+      <DrawerSurface open={smartSignals.length > 0} title="Smart assistance" description="Proactive checks from the current workspace data.">
+        <div className="space-y-2">
+          {smartSignals.slice(0, 4).map((signal) => (
+            <div key={signal.label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={signal.tone}>{signal.label}</StatusPill>
+                <span className="text-xs font-semibold text-[var(--color-text-secondary)]">{signal.confidence} confidence</span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{signal.body}</p>
+            </div>
+          ))}
+        </div>
+      </DrawerSurface>
+
+      <WorkItemPanel title="Recent activity" eyebrow={`${activityItems.length} events`} tone="info">
+        <Timeline
+          items={activityItems.slice(0, 5).map((item) => ({
+            body: item.body,
+            id: item.id,
+            meta: formatWorkspaceDateTime(item.timestamp),
+            title: item.title,
+            tone: item.tone,
+          }))}
+        />
+      </WorkItemPanel>
+    </div>
+  );
+}
+
+function OverviewModule({
+  data,
+  role,
+  smartSignals,
+}: {
+  data: AssessmentWorkspaceData;
+  role: WorkspaceRole;
+  smartSignals: ReturnType<typeof buildSmartSignals>;
+}) {
+  const lifecycle = getLifecycleFacts(data.assessment);
+  const criticalFindings = countCriticalFindings(data.findings);
+  const evidenceGaps = countEvidenceGaps(data.evidenceReadiness);
+  const gates = getDeliveryGates(data);
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricTile icon={<ClipboardList size={16} />} label="Lifecycle" tone={lifecycleTone(data.assessment.status)} value={lifecycle.customerLabel} />
+        <MetricTile icon={<ShieldCheck size={16} />} label="Evidence readiness" tone={evidenceGaps > 0 ? "warning" : "success"} value={`${data.evidenceReadiness.readinessPercent}%`} />
+        <MetricTile icon={<AlertCircle size={16} />} label="Critical findings" tone={criticalFindings > 0 ? "danger" : "success"} value={String(criticalFindings)} />
+        <MetricTile icon={<BarChart3 size={16} />} label="Scorecard" tone={data.scoreSummary.completedModules === data.scoreSummary.totalModules ? "success" : "warning"} value={`${data.scoreSummary.completedModules}/${data.scoreSummary.totalModules}`} />
+      </div>
+
+      <WorkItemPanel
+        eyebrow={role === "customer" ? "Customer summary" : "Analyst command center"}
+        title="What needs attention"
+        description={role === "customer" ? "Customer-visible request status and missing inputs." : "Next actions across intake, evidence, scorecard, and report delivery."}
+        tone="brand"
+      >
+        <div className="grid gap-3 lg:grid-cols-2">
+          {smartSignals.length > 0 ? (
+            smartSignals.map((signal) => (
+              <div key={signal.label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+                <StatusPill tone={signal.tone}>{signal.label}</StatusPill>
+                <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{signal.body}</p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-sm font-medium text-[var(--color-success)]">
+              No urgent smart-assistance flags found.
+            </div>
+          )}
+        </div>
+      </WorkItemPanel>
+
+      <WorkItemPanel title="Delivery gates" eyebrow={deliveryGatesAreComplete(gates) ? "Ready" : "Open gates"} tone={deliveryGatesAreComplete(gates) ? "success" : "warning"}>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {gates.map((gate) => (
+            <div key={gate.key} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+              <StatusPill tone={gate.status === "pass" ? "success" : gate.status === "risk" ? "warning" : "danger"} className={deliveryGateTone(gate.status)}>
+                {gate.status}
+              </StatusPill>
+              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{gate.label}</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{gate.detail}</p>
+            </div>
+          ))}
+        </div>
+      </WorkItemPanel>
+    </div>
+  );
+}
+
+function IntakeModule({ data, role }: { data: AssessmentWorkspaceData; role: WorkspaceRole }) {
+  const { assessment } = data;
+  const site = getSite(assessment);
+  const project = getProject(assessment);
+  const organisation = getOrganisation(assessment);
+
+  return (
+    <WorkItemPanel
+      eyebrow={role === "customer" ? "Shared intake" : "Intake record"}
+      title="Intake facts"
+      description="Essential request details, project assumptions, and customer context."
+      tone={assessment.intake_completeness_score >= 100 ? "success" : "warning"}
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <Fact label="Customer" value={organisation?.name ?? "Not set"} />
+        <Fact label="Contact" value={assessment.contact?.email ?? assessment.contact?.name ?? "Not set"} />
+        <Fact label="Project" value={project?.name ?? "Not set"} />
+        <Fact label="Site" value={site?.site_name ?? "Not set"} />
+        <Fact label="Target load" value={assessment.target_load_mw ? `${assessment.target_load_mw} MW` : "Not set"} />
+        <Fact label="Desired energization" value={formatWorkspaceDate(assessment.desired_energization_date)} />
+        <Fact label="Project stage" value={assessment.project_stage ?? "Not set"} />
+        <Fact label="Land control" value={assessment.land_control_status ?? "Not set"} />
+        <Fact label="Confidentiality" value={assessment.confidentiality_status.replaceAll("_", " ")} />
+        <Fact label="Completeness" value={`${assessment.intake_completeness_score}%`} />
+      </div>
+      {role === "analyst" ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <TextBlock label="Existing studies" value={assessment.existing_studies_summary} />
+          <TextBlock label="Existing power quote" value={assessment.existing_power_quote_summary} />
+          <TextBlock label="Backup generation" value={assessment.backup_generation_assumptions} />
+          <TextBlock label="Storage assumptions" value={assessment.battery_storage_assumptions} />
+        </div>
+      ) : null}
+    </WorkItemPanel>
+  );
+}
+
+function SiteGridModule({ data }: { data: AssessmentWorkspaceData }) {
+  const site = getSite(data.assessment);
+
+  return (
+    <div className="space-y-5">
+      <WorkItemPanel title="Site and grid context" eyebrow="Site & Grid" tone="info">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Fact label="Address" value={[site?.address, site?.city, site?.county, site?.state].filter(Boolean).join(", ") || "Not set"} />
+          <Fact label="Coordinates" value={site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : "Not set"} />
+          <Fact label="Market" value={data.assessment.market_region || "Not set"} />
+          <Fact label="Known utility" value={data.assessment.known_utility ?? "Not set"} />
+          <Fact label="Known TSP" value={data.assessment.known_tsp ?? "Not set"} />
+          <Fact label="Substation / POI" value={data.assessment.known_substation_or_poi ?? "Not set"} />
+        </div>
+      </WorkItemPanel>
+
+      <WorkItemPanel title="Grid assets" eyebrow={`${data.gridAssets.length} assets`} tone={data.gridAssets.length > 0 ? "success" : "neutral"}>
+        {data.gridAssets.length === 0 ? (
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+            No grid assets captured yet.
+          </p>
+        ) : (
+          <div className="grid gap-3">
+            {data.gridAssets.map((asset) => (
+              <div key={asset.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill tone={asset.is_candidate_poi ? "brand" : "neutral"}>{asset.is_candidate_poi ? "Candidate POI" : gridAssetTypeLabel(asset.asset_type)}</StatusPill>
+                  <StatusPill tone={asset.confidence_level === "high" ? "success" : asset.confidence_level === "medium" ? "info" : "warning"}>{asset.confidence_level}</StatusPill>
+                </div>
+                <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{asset.asset_name}</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                  {formatDistanceMiles(asset.distance_miles)} · {asset.owner_operator ?? "Owner unknown"} · {asset.voltage_kv ? `${asset.voltage_kv} kV` : "Voltage unknown"}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </WorkItemPanel>
+    </div>
+  );
+}
+
+function EvidenceModule({ data }: { data: AssessmentWorkspaceData }) {
+  return (
+    <WorkItemPanel title="Evidence workstream" eyebrow={`${data.evidenceSources.length} sources`} tone={data.evidenceReadiness.readinessPercent >= 80 ? "success" : "warning"}>
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Fact label="Sources" value={String(data.evidenceReadiness.totalSources)} />
+        <Fact label="Findings with evidence" value={`${data.evidenceReadiness.findingsWithEvidence}/${data.evidenceReadiness.totalFindings}`} />
+        <Fact label="Low-confidence sources" value={String(data.evidenceReadiness.lowConfidenceSources)} />
+      </div>
+      <div className="grid gap-3">
+        {data.evidenceSources.length === 0 ? (
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+            No evidence sources yet.
+          </p>
+        ) : (
+          data.evidenceSources.map((source) => (
+            <div key={source.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone="info">{evidenceSourceTypeLabel(source.source_type)}</StatusPill>
+                <StatusPill tone={source.confidence_level === "high" ? "success" : source.confidence_level === "medium" ? "info" : "warning"}>
+                  {evidenceConfidenceLabel(source.confidence_level)}
+                </StatusPill>
+              </div>
+              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{source.title}</p>
+              {source.summary ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{source.summary}</p> : null}
+            </div>
+          ))
+        )}
+      </div>
+    </WorkItemPanel>
+  );
+}
+
+function FindingsModule({ data }: { data: AssessmentWorkspaceData }) {
+  return (
+    <WorkItemPanel title="Findings" eyebrow={`${data.findings.length} findings`} tone={data.findings.some((finding) => finding.risk_level === "critical" || finding.risk_level === "high") ? "danger" : "info"}>
+      <div className="grid gap-3">
+        {data.findings.length === 0 ? (
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+            No findings captured yet.
+          </p>
+        ) : (
+          data.findings.map((finding) => (
+            <div key={finding.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={finding.risk_level === "critical" || finding.risk_level === "high" ? "danger" : finding.risk_level === "medium" ? "warning" : "neutral"}>
+                  {riskLevelLabel(finding.risk_level)}
+                </StatusPill>
+                <StatusPill tone="info">{findingModuleLabel(finding.module_key)}</StatusPill>
+                <StatusPill tone={finding.status === "resolved" ? "success" : finding.status === "needs_review" ? "warning" : "neutral"}>{findingStatusLabel(finding.status)}</StatusPill>
+              </div>
+              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{finding.title}</p>
+              {finding.statement ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{finding.statement}</p> : null}
+            </div>
+          ))
+        )}
+      </div>
+    </WorkItemPanel>
+  );
+}
+
+function ScorecardModule({ data, role }: { data: AssessmentWorkspaceData; role: WorkspaceRole }) {
+  const triggerSummary = detectExpertReviewTriggers({
+    assessment: data.assessment,
+    findings: data.findings,
+    projectType: getProject(data.assessment)?.project_type,
+    rideThroughUnknown: false,
+    scores: data.scores,
+  });
+
+  return (
+    <div className="space-y-5">
+      <WorkItemPanel title="Scorecard" eyebrow={`${data.scoreSummary.completedModules}/${data.scoreSummary.totalModules} modules`} tone={data.scoreSummary.completedModules === data.scoreSummary.totalModules ? "success" : "warning"}>
+        <div className="grid gap-3 md:grid-cols-2">
+          {data.scores.length === 0 ? (
+            <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)] md:col-span-2">
+              No score modules completed yet.
+            </p>
+          ) : (
+            data.scores.map((score) => (
+              <div key={score.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cx("rounded-md border px-2 py-1 text-xs font-semibold", scoreTone(score.score))}>{score.score}</span>
+                  <StatusPill tone={score.confidence_level === "high" ? "success" : "info"}>{score.confidence_level}</StatusPill>
+                </div>
+                <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{scoreModuleLabel(score.module_key)}</p>
+                {role === "analyst" && score.rationale ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{score.rationale}</p> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </WorkItemPanel>
+
+      <WorkItemPanel title="Verdict and expert review" eyebrow={data.verdict ? verdictLabel(data.verdict.verdict) : "No verdict"} tone={data.verdict?.approved_by_analyst ? "success" : "warning"}>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <TextBlock label="Verdict summary" value={data.verdict?.summary ?? null} />
+          <TextBlock label="Recommended next steps" value={data.verdict?.recommended_next_steps ?? null} />
+          <TextBlock label="Key strengths" value={data.verdict?.key_strengths ?? null} />
+          <TextBlock label="Key risks" value={data.verdict?.key_risks ?? null} />
+        </div>
+        <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+          <StatusPill tone={triggerSummary.required ? "warning" : "success"}>
+            {triggerSummary.required ? "Expert review required" : "No expert review trigger"}
+          </StatusPill>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+            {data.expertReview ? reviewStatusLabel(data.expertReview.status) : triggerSummary.reasonText || "No expert-review record yet."}
+          </p>
+        </div>
+      </WorkItemPanel>
+    </div>
+  );
+}
+
+function ReportModule({ data }: { data: AssessmentWorkspaceData }) {
+  return (
+    <WorkItemPanel
+      action={<Link href={`/intake/reports/${data.assessment.id}`} className={secondaryButtonClass}>Open report preview</Link>}
+      title="Report workbench"
+      eyebrow={data.reportExport ? reportExportStatusLabel(data.reportExport.status) : "Not started"}
+      tone={data.reportExport?.status === "ready_for_review" || data.reportExport?.status === "exported" ? "success" : "info"}
+    >
+      <div className="grid gap-3">
+        {data.reportSections.length === 0 ? (
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+            No report sections generated yet.
+          </p>
+        ) : (
+          data.reportSections.map((section) => (
+            <div key={section.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={section.status === "final" || section.status === "ready" ? "success" : section.status === "needs_review" ? "warning" : "neutral"}>
+                  {reportSectionStatusLabel(section.status)}
+                </StatusPill>
+                <span className="text-xs font-semibold text-[var(--color-text-secondary)]">Updated {formatWorkspaceDateTime(section.updated_at)}</span>
+              </div>
+              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{section.title}</p>
+              <p className="mt-1 line-clamp-3 text-sm leading-6 text-[var(--color-text-secondary)]">{section.content || section.generation_notes || "No content saved."}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </WorkItemPanel>
+  );
+}
+
+function ActivityModule({ data, role }: { data: AssessmentWorkspaceData; role: WorkspaceRole }) {
+  const activityItems = buildActivityItems({
+    ...data,
+    notes: role === "customer" ? data.notes.filter((note) => !note.is_internal) : data.notes,
+  });
+
+  return (
+    <WorkItemPanel title="Activity timeline" eyebrow={`${activityItems.length} events`} tone="info">
+      <Timeline
+        items={activityItems.map((item) => ({
+          body: item.body,
+          id: item.id,
+          meta: formatWorkspaceDateTime(item.timestamp),
+          title: item.title,
+          tone: item.tone,
+        }))}
+      />
+    </WorkItemPanel>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">{label}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-[var(--color-text-primary)]">{value || "Not set"}</p>
+    </div>
+  );
+}
+
+function TextBlock({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">{label}</p>
+      <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-secondary)]">{value?.trim() || "Not set"}</p>
+    </div>
+  );
+}
+
+function getDeliveryGates(data: AssessmentWorkspaceData) {
+  const triggerSummary = detectExpertReviewTriggers({
+    assessment: data.assessment,
+    findings: data.findings,
+    projectType: getProject(data.assessment)?.project_type,
+    rideThroughUnknown: false,
+    scores: data.scores,
+  });
+
+  return calculateDeliveryGates({
+    criticalFindingCount: countCriticalFindings(data.findings),
+    evidenceReadiness: data.evidenceReadiness,
+    expertReview: data.expertReview,
+    expertReviewRequired: triggerSummary.required,
+    scoreSummary: data.scoreSummary,
+    verdict: data.verdict,
+  });
+}

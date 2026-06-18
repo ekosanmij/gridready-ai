@@ -1,7 +1,7 @@
 import Link from "next/link";
+import { AssessmentWorkspace } from "@/components/assessment-workspace/assessment-workspace";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { secondaryButtonClass } from "@/components/ui-primitives";
-import { AssessmentStatusPage } from "@/components/work-queue/assessment-status-page";
 
 export default async function AssessmentDetailRoute({
   params,
@@ -13,11 +13,10 @@ export default async function AssessmentDetailRoute({
   return (
     <AppShell
       actions={<Link href="/intake/assessments" className={secondaryButtonClass}>Assessment queue</Link>}
-      eyebrow="Assessment status"
+      eyebrow="Analyst workspace"
       title="Workspace"
     >
-      <AssessmentStatusPage assessmentId={assessmentId} />
+      <AssessmentWorkspace assessmentId={assessmentId} />
     </AppShell>
   );
 }
-
