@@ -6,6 +6,7 @@ import {
   Home,
   LayoutDashboard,
   Moon,
+  LogOut,
   Plus,
   Settings,
   ShieldCheck,
@@ -16,6 +17,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useSyncExternalStore } from "react";
 import { GlobalSearch } from "@/components/global-search/global-search";
+import { useAuth } from "@/components/auth/auth-provider";
 import { cx, primaryButtonClass, secondaryButtonClass } from "@/components/ui-primitives";
 import {
   ThemePreference,
@@ -28,6 +30,7 @@ import {
   subscribeHydrationChange,
   subscribeThemePreference,
 } from "@/lib/ui-preferences";
+import { supabase } from "@/lib/supabase";
 
 const navigationItems = [
   { href: "/intake", icon: <Home size={18} />, label: "Home" },
@@ -50,6 +53,7 @@ export function AppShell({
   title: string;
 }) {
   const pathname = usePathname();
+  const { role, user } = useAuth();
   const theme = useSyncExternalStore(
     subscribeThemePreference,
     getThemePreferenceSnapshot,
@@ -69,6 +73,11 @@ export function AppShell({
   function toggleTheme() {
     const nextTheme: ThemePreference = theme === "dark" ? "light" : "dark";
     setThemePreference(nextTheme);
+  }
+
+  async function signOut() {
+    await supabase?.auth.signOut();
+    window.location.assign("/auth/login");
   }
 
   return (
@@ -111,6 +120,12 @@ export function AppShell({
             </nav>
 
             <div className="border-t border-[var(--color-border)] p-3">
+              {user ? (
+                <div className="mb-3 rounded-md bg-[var(--color-surface-muted)] px-3 py-2">
+                  <p className="truncate text-xs font-semibold text-[var(--color-text-primary)]">{user.email}</p>
+                  <p className="mt-0.5 text-xs capitalize text-[var(--color-text-secondary)]">{role}</p>
+                </div>
+              ) : null}
               <button type="button" className={secondaryButtonClass}>
                 <Settings size={16} />
                 Settings
@@ -155,6 +170,10 @@ export function AppShell({
                 >
                   {displayedTheme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                   {displayedTheme === "dark" ? "Light" : "Dark"}
+                </button>
+                <button type="button" onClick={signOut} className={secondaryButtonClass} title="Sign out">
+                  <LogOut size={16} />
+                  <span className="hidden sm:inline">Sign out</span>
                 </button>
               </div>
             </div>

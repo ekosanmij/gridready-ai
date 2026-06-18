@@ -168,32 +168,6 @@ export function SplitPane({
   );
 }
 
-export function DrawerSurface({
-  children,
-  description,
-  open,
-  title,
-}: {
-  children: ReactNode;
-  description?: string;
-  open: boolean;
-  title: string;
-}) {
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <section className={cx(panelClass, "overflow-hidden")}>
-      <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
-        {description ? <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{description}</p> : null}
-      </div>
-      <div className="p-4">{children}</div>
-    </section>
-  );
-}
-
 export function WorkItemPanel({
   action,
   children,

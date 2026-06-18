@@ -16,9 +16,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
-  DrawerSurface,
   MetricTile,
-  SegmentedControl,
   SplitPane,
   StatusPill,
   Timeline,
@@ -27,6 +25,11 @@ import {
   panelClass,
   secondaryButtonClass,
 } from "@/components/ui-primitives";
+import { type AppRole, useAuth } from "@/components/auth/auth-provider";
+import { AssignmentControls } from "@/components/assessment-workspace/assignment-controls";
+import { EvidenceEditor } from "@/components/assessment-workspace/evidence-editor";
+import { ReportAuthor } from "@/components/assessment-workspace/report-author";
+import { SmartAssistant } from "@/components/assessment-workspace/smart-assistant";
 import {
   ActivityItem,
   AssessmentDetailRecord,
@@ -53,8 +56,6 @@ import {
   AssessmentFindingRecord,
   EvidenceSourceRecord,
   FindingEvidenceLinkRecord,
-  evidenceConfidenceLabel,
-  evidenceSourceTypeLabel,
   findingModuleLabel,
   findingStatusLabel,
   riskLevelLabel,
@@ -65,7 +66,6 @@ import {
   AssessmentReportExportRecord,
   AssessmentReportSectionRecord,
   reportExportStatusLabel,
-  reportSectionStatusLabel,
 } from "@/lib/report-builder";
 import {
   AssessmentScoreRecord,
@@ -99,17 +99,15 @@ const moduleIcons: Record<WorkspaceModuleId, ReactNode> = {
 
 export function AssessmentWorkspace({
   assessmentId,
-  initialRole = "analyst",
-  roleLocked = false,
 }: {
   assessmentId: string;
-  initialRole?: WorkspaceRole;
-  roleLocked?: boolean;
 }) {
   const [data, setData] = useState<AssessmentWorkspaceData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<WorkspaceRole>(initialRole);
+  const [reloadKey, setReloadKey] = useState(0);
+  const { role: appRole } = useAuth();
+  const role: WorkspaceRole = appRole === "customer" ? "customer" : "analyst";
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
@@ -333,7 +331,11 @@ export function AssessmentWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [assessmentId]);
+  }, [assessmentId, reloadKey]);
+
+  function refreshWorkspace() {
+    setReloadKey((value) => value + 1);
+  }
 
   function selectModule(moduleId: WorkspaceModuleId) {
     const params = new URLSearchParams(searchParams.toString());
@@ -398,26 +400,10 @@ export function AssessmentWorkspace({
           </div>
 
           <div className="space-y-3">
-            {roleLocked ? (
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-secondary)]">Workspace role</p>
-                <div className="mt-2">
-                  <StatusPill tone={role === "customer" ? "info" : "brand"}>
-                    {role === "customer" ? "Customer view" : "Analyst view"}
-                  </StatusPill>
-                </div>
-              </div>
-            ) : (
-              <SegmentedControl<WorkspaceRole>
-                label="Workspace role"
-                onChange={setRole}
-                options={[
-                  { label: "Analyst", value: "analyst" },
-                  { label: "Customer", value: "customer" },
-                ]}
-                value={role}
-              />
-            )}
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-secondary)]">Authenticated role</p>
+              <div className="mt-2"><StatusPill tone={role === "customer" ? "info" : "brand"}>{appRole}</StatusPill></div>
+            </div>
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-secondary)]">Current owner</p>
               <p className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">{lifecycle.owner}</p>
@@ -459,11 +445,13 @@ export function AssessmentWorkspace({
             data={data}
             lifecycle={lifecycle}
             role={role}
+            appRole={appRole}
             smartSignals={smartSignals}
+            onRefresh={refreshWorkspace}
           />
         }
       >
-        <ModuleContent activeModule={activeModule} data={data} role={role} smartSignals={smartSignals} />
+        <ModuleContent activeModule={activeModule} data={data} role={role} appRole={appRole} smartSignals={smartSignals} onRefresh={refreshWorkspace} />
       </SplitPane>
     </div>
   );
@@ -471,12 +459,16 @@ export function AssessmentWorkspace({
 
 function ModuleContent({
   activeModule,
+  appRole,
   data,
+  onRefresh,
   role,
   smartSignals,
 }: {
   activeModule: WorkspaceModuleId;
+  appRole: AppRole;
   data: AssessmentWorkspaceData;
+  onRefresh: () => void;
   role: WorkspaceRole;
   smartSignals: ReturnType<typeof buildSmartSignals>;
 }) {
@@ -484,13 +476,13 @@ function ModuleContent({
     case "activity":
       return <ActivityModule data={data} role={role} />;
     case "evidence":
-      return <EvidenceModule data={data} />;
+      return <EvidenceModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "findings":
       return <FindingsModule data={data} />;
     case "intake":
       return <IntakeModule data={data} role={role} />;
     case "report":
-      return <ReportModule data={data} />;
+      return <ReportModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "scorecard":
       return <ScorecardModule data={data} role={role} />;
     case "site-grid":
@@ -503,14 +495,18 @@ function ModuleContent({
 
 function ContextRail({
   activityItems,
+  appRole,
   data,
   lifecycle,
+  onRefresh,
   role,
   smartSignals,
 }: {
   activityItems: ActivityItem[];
+  appRole: AppRole;
   data: AssessmentWorkspaceData;
   lifecycle: ReturnType<typeof getLifecycleFacts>;
+  onRefresh: () => void;
   role: WorkspaceRole;
   smartSignals: ReturnType<typeof buildSmartSignals>;
 }) {
@@ -537,19 +533,16 @@ function ContextRail({
         </div>
       </WorkItemPanel>
 
-      <DrawerSurface open={smartSignals.length > 0} title="Smart assistance" description="Proactive checks from the current workspace data.">
-        <div className="space-y-2">
-          {smartSignals.slice(0, 4).map((signal) => (
-            <div key={signal.label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill tone={signal.tone}>{signal.label}</StatusPill>
-                <span className="text-xs font-semibold text-[var(--color-text-secondary)]">{signal.confidence} confidence</span>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{signal.body}</p>
-            </div>
-          ))}
-        </div>
-      </DrawerSurface>
+      <WorkItemPanel title="Assignment controls" eyebrow="Persistent" tone="brand">
+        <AssignmentControls
+          assessmentId={data.assessment.id}
+          role={appRole}
+          value={data.assessment}
+          onSaved={onRefresh}
+        />
+      </WorkItemPanel>
+
+      <SmartAssistant assessment={data.assessment} gridAssets={data.gridAssets} role={appRole} signals={smartSignals} onApplied={onRefresh} />
 
       <WorkItemPanel title="Recent activity" eyebrow={`${activityItems.length} events`} tone="info">
         <Timeline
@@ -707,7 +700,7 @@ function SiteGridModule({ data }: { data: AssessmentWorkspaceData }) {
   );
 }
 
-function EvidenceModule({ data }: { data: AssessmentWorkspaceData }) {
+function EvidenceModule({ data, role, onRefresh }: { data: AssessmentWorkspaceData; role: AppRole; onRefresh: () => void }) {
   return (
     <WorkItemPanel title="Evidence workstream" eyebrow={`${data.evidenceSources.length} sources`} tone={data.evidenceReadiness.readinessPercent >= 80 ? "success" : "warning"}>
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
@@ -715,26 +708,7 @@ function EvidenceModule({ data }: { data: AssessmentWorkspaceData }) {
         <Fact label="Findings with evidence" value={`${data.evidenceReadiness.findingsWithEvidence}/${data.evidenceReadiness.totalFindings}`} />
         <Fact label="Low-confidence sources" value={String(data.evidenceReadiness.lowConfidenceSources)} />
       </div>
-      <div className="grid gap-3">
-        {data.evidenceSources.length === 0 ? (
-          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
-            No evidence sources yet.
-          </p>
-        ) : (
-          data.evidenceSources.map((source) => (
-            <div key={source.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill tone="info">{evidenceSourceTypeLabel(source.source_type)}</StatusPill>
-                <StatusPill tone={source.confidence_level === "high" ? "success" : source.confidence_level === "medium" ? "info" : "warning"}>
-                  {evidenceConfidenceLabel(source.confidence_level)}
-                </StatusPill>
-              </div>
-              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{source.title}</p>
-              {source.summary ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{source.summary}</p> : null}
-            </div>
-          ))
-        )}
-      </div>
+      <EvidenceEditor assessmentId={data.assessment.id} role={role} sources={data.evidenceSources} onChanged={onRefresh} />
     </WorkItemPanel>
   );
 }
@@ -819,34 +793,14 @@ function ScorecardModule({ data, role }: { data: AssessmentWorkspaceData; role: 
   );
 }
 
-function ReportModule({ data }: { data: AssessmentWorkspaceData }) {
+function ReportModule({ data, role, onRefresh }: { data: AssessmentWorkspaceData; role: AppRole; onRefresh: () => void }) {
   return (
     <WorkItemPanel
-      action={<Link href={`/intake/reports/${data.assessment.id}`} className={secondaryButtonClass}>Open report preview</Link>}
       title="Report workbench"
       eyebrow={data.reportExport ? reportExportStatusLabel(data.reportExport.status) : "Not started"}
       tone={data.reportExport?.status === "ready_for_review" || data.reportExport?.status === "exported" ? "success" : "info"}
     >
-      <div className="grid gap-3">
-        {data.reportSections.length === 0 ? (
-          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
-            No report sections generated yet.
-          </p>
-        ) : (
-          data.reportSections.map((section) => (
-            <div key={section.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill tone={section.status === "final" || section.status === "ready" ? "success" : section.status === "needs_review" ? "warning" : "neutral"}>
-                  {reportSectionStatusLabel(section.status)}
-                </StatusPill>
-                <span className="text-xs font-semibold text-[var(--color-text-secondary)]">Updated {formatWorkspaceDateTime(section.updated_at)}</span>
-              </div>
-              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{section.title}</p>
-              <p className="mt-1 line-clamp-3 text-sm leading-6 text-[var(--color-text-secondary)]">{section.content || section.generation_notes || "No content saved."}</p>
-            </div>
-          ))
-        )}
-      </div>
+      <ReportAuthor assessmentId={data.assessment.id} assessmentName={data.assessment.assessment_name} marketRegion={data.assessment.market_region} role={role} sections={data.reportSections} reportExport={data.reportExport} onChanged={onRefresh} />
     </WorkItemPanel>
   );
 }
