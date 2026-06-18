@@ -40,6 +40,9 @@ describe("production workbench integration contracts", () => {
   it("ships the security, storage, geospatial, and indexed-search schema together", () => {
     const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260618120000_workbench_production_readiness.sql"), "utf8");
     expect(migration).toContain("create type public.app_role");
+    expect(migration).toContain("add column if not exists organisation_id");
+    expect(migration).toContain("select p.role::text");
+    expect(migration).not.toContain("select coalesce((select p.role from public.profiles");
     expect(migration).toContain("create or replace function public.can_access_assessment");
     expect(migration).toContain("assessment-evidence");
     expect(migration).toContain("using gist (boundary)");
