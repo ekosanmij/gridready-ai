@@ -7,21 +7,25 @@ import {
   LayoutDashboard,
   Moon,
   Plus,
-  Search,
   Settings,
+  ShieldCheck,
   Sun,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useSyncExternalStore } from "react";
+import { GlobalSearch } from "@/components/global-search/global-search";
 import { cx, primaryButtonClass, secondaryButtonClass } from "@/components/ui-primitives";
 import {
   ThemePreference,
   applyThemePreference,
+  getClientHydrationSnapshot,
+  getServerHydrationSnapshot,
   getThemePreferenceServerSnapshot,
   getThemePreferenceSnapshot,
   setThemePreference,
+  subscribeHydrationChange,
   subscribeThemePreference,
 } from "@/lib/ui-preferences";
 
@@ -29,6 +33,7 @@ const navigationItems = [
   { href: "/intake", icon: <Home size={18} />, label: "Home" },
   { href: "/intake/requests/new", icon: <Plus size={18} />, label: "Requests" },
   { href: "/intake/assessments", icon: <ClipboardList size={18} />, label: "Assessments" },
+  { href: "/intake/evidence", icon: <ShieldCheck size={18} />, label: "Evidence" },
   { href: "/intake/workspace", icon: <LayoutDashboard size={18} />, label: "Workspace" },
   { href: "/intake/reports", icon: <FileText size={18} />, label: "Reports" },
 ];
@@ -50,6 +55,12 @@ export function AppShell({
     getThemePreferenceSnapshot,
     getThemePreferenceServerSnapshot,
   );
+  const isHydrated = useSyncExternalStore(
+    subscribeHydrationChange,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
+  const displayedTheme = isHydrated ? theme : getThemePreferenceServerSnapshot();
 
   useEffect(() => {
     applyThemePreference(theme);
@@ -129,14 +140,7 @@ export function AppShell({
               </div>
 
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <label className="relative hidden min-w-[260px] flex-1 xl:block">
-                  <span className="sr-only">Search portal</span>
-                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]" size={16} />
-                  <input
-                    className="h-10 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-9 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-brand-primary)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
-                    placeholder="Search requests, assessments, evidence"
-                  />
-                </label>
+                <GlobalSearch className="hidden xl:block" />
                 {actions}
                 <Link href="/intake/requests/new" className={primaryButtonClass}>
                   <Plus size={16} />
@@ -145,14 +149,18 @@ export function AppShell({
                 <button
                   type="button"
                   onClick={toggleTheme}
-                  aria-pressed={theme === "dark"}
+                  aria-pressed={displayedTheme === "dark"}
                   className={secondaryButtonClass}
-                  title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                  title={displayedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                 >
-                  {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                  {theme === "dark" ? "Light" : "Dark"}
+                  {displayedTheme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                  {displayedTheme === "dark" ? "Light" : "Dark"}
                 </button>
               </div>
+            </div>
+
+            <div className="border-t border-[var(--color-border)] px-4 py-2 xl:hidden">
+              <GlobalSearch />
             </div>
 
             <nav className="flex gap-2 overflow-x-auto border-t border-[var(--color-border)] px-4 py-2 lg:hidden" aria-label="Mobile navigation">

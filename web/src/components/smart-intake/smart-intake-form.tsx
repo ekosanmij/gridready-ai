@@ -3,7 +3,7 @@
 import { AlertCircle, CheckCircle2, Loader2, Save, Send, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState, useSyncExternalStore } from "react";
+import { FormEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AddressAutocompleteField } from "@/components/address-autocomplete-field";
 import {
   FieldControl,
@@ -28,6 +28,11 @@ import {
   IntakeRequestType,
 } from "@/lib/intake-request-types";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
+import {
+  getClientHydrationSnapshot,
+  getServerHydrationSnapshot,
+  subscribeHydrationChange,
+} from "@/lib/ui-preferences";
 
 const fieldStateOptions: Array<{ label: string; value: IntakeFieldState }> = [
   { value: "provided", label: "Provided" },
@@ -52,6 +57,19 @@ type SmartIntakeDraft = {
   fieldStates: Partial<Record<keyof AssessmentFormState, IntakeFieldState>>;
   form: AssessmentFormState;
   savedAt: string;
+};
+
+type DuplicateRequestSuggestion = {
+  id: string;
+  label: string;
+  reason: string;
+};
+
+type SmartIntakeSuggestion = {
+  body: string;
+  confidence: "High" | "Medium" | "Low";
+  label: string;
+  tone: "danger" | "info" | "success" | "warning";
 };
 
 function createBlankSmartIntakeDraft(requestType: IntakeRequestType): SmartIntakeDraft {
@@ -130,12 +148,18 @@ function subscribeSmartIntakeDraft(draftKey: string, onStoreChange: () => void) 
 
 export function SmartIntakeForm({ requestType }: { requestType: IntakeRequestType }) {
   const draftKey = `gridready-smart-intake:${requestType.id}`;
+  const isHydrated = useSyncExternalStore(
+    subscribeHydrationChange,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
   const draftSnapshot = useSyncExternalStore(
     (onStoreChange) => subscribeSmartIntakeDraft(draftKey, onStoreChange),
     () => getSmartIntakeDraftSnapshot(draftKey),
     getSmartIntakeDraftServerSnapshot,
   );
-  const initialDraft = useMemo(() => parseSmartIntakeDraft(draftSnapshot, requestType), [draftSnapshot, requestType]);
+  const effectiveDraftSnapshot = isHydrated ? draftSnapshot : "";
+  const initialDraft = useMemo(() => parseSmartIntakeDraft(effectiveDraftSnapshot, requestType), [effectiveDraftSnapshot, requestType]);
   const formKey = `${requestType.id}:${initialDraft.savedAt || "blank"}`;
 
   return <SmartIntakeFormContent key={formKey} draftKey={draftKey} initialDraft={initialDraft} requestType={requestType} />;
@@ -157,10 +181,109 @@ function SmartIntakeFormContent({
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [mobileQuestionIndex, setMobileQuestionIndex] = useState(0);
+  const [duplicateSuggestions, setDuplicateSuggestions] = useState<DuplicateRequestSuggestion[]>([]);
 
   const missingItems = useMemo(() => getMissingItems(form, requestType), [form, requestType]);
   const completenessScore = useMemo(() => calculateCompletenessScore(form), [form]);
   const canSubmit = missingItems.length === 0 && !submitting;
+  const mobileFields = useMemo(
+    () =>
+      requestType.fieldGroups.flatMap((group) =>
+        group.fields.map((field) => ({
+          field,
+          groupDescription: group.description,
+          groupTitle: group.title,
+        })),
+      ),
+    [requestType],
+  );
+  const currentMobileField = mobileFields[Math.min(mobileQuestionIndex, Math.max(0, mobileFields.length - 1))] ?? null;
+  const mobileProgress = mobileFields.length === 0 ? 0 : Math.round(((Math.min(mobileQuestionIndex, mobileFields.length - 1) + 1) / mobileFields.length) * 100);
+  const smartSuggestions = useMemo(
+    () => buildSmartIntakeSuggestions(form, duplicateSuggestions),
+    [duplicateSuggestions, form],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDuplicateSuggestions() {
+      if (!hasSupabaseConfig || !supabase) {
+        setDuplicateSuggestions([]);
+        return;
+      }
+
+      const siteQuery = form.siteName.trim().toLowerCase();
+      const addressQuery = form.address.trim().toLowerCase();
+      const organisationQuery = form.organisationName.trim().toLowerCase();
+
+      if (siteQuery.length < 3 && addressQuery.length < 5 && organisationQuery.length < 3) {
+        setDuplicateSuggestions([]);
+        return;
+      }
+
+      const { data } = await supabase
+        .from("site_assessments")
+        .select(`
+          id,
+          assessment_name,
+          status,
+          target_load_mw,
+          sites (site_name, address, county, state),
+          projects (
+            name,
+            organisations (name)
+          )
+        `)
+        .order("updated_at", { ascending: false })
+        .limit(50);
+
+      if (cancelled) {
+        return;
+      }
+
+      const matches = ((data ?? []) as Array<{
+        assessment_name: string;
+        id: string;
+        projects?: Array<{ organisations?: Array<{ name: string }> | { name: string } | null }> | { organisations?: Array<{ name: string }> | { name: string } | null } | null;
+        sites?: Array<{ address: string | null; site_name: string }> | { address: string | null; site_name: string } | null;
+      }>)
+        .map((assessment) => {
+          const site = Array.isArray(assessment.sites) ? assessment.sites[0] : assessment.sites;
+          const project = Array.isArray(assessment.projects) ? assessment.projects[0] : assessment.projects;
+          const organisation = Array.isArray(project?.organisations) ? project?.organisations[0] : project?.organisations;
+          const reasons = [
+            siteQuery && site?.site_name?.toLowerCase().includes(siteQuery) ? "similar site name" : "",
+            addressQuery && site?.address?.toLowerCase().includes(addressQuery) ? "similar address" : "",
+            organisationQuery && organisation?.name?.toLowerCase().includes(organisationQuery) ? "same customer" : "",
+          ].filter(Boolean);
+
+          if (reasons.length === 0) {
+            return null;
+          }
+
+          return {
+            id: assessment.id,
+            label: assessment.assessment_name,
+            reason: reasons.join(", "),
+          };
+        })
+        .filter((item): item is DuplicateRequestSuggestion => Boolean(item))
+        .slice(0, 4);
+
+      setDuplicateSuggestions(matches);
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadDuplicateSuggestions();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [form.address, form.organisationName, form.siteName]);
 
   function updateForm<K extends keyof AssessmentFormState>(key: K, value: AssessmentFormState[K]) {
     setForm((current) => {
@@ -365,7 +488,58 @@ function SmartIntakeFormContent({
           </aside>
         </div>
 
-        <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="border-b border-[var(--color-border)] p-5 lg:hidden">
+          {currentMobileField ? (
+            <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="mb-4">
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-[var(--color-text-secondary)]">
+                  <span>Question {Math.min(mobileQuestionIndex, mobileFields.length - 1) + 1} of {mobileFields.length}</span>
+                  <span>{mobileProgress}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-md bg-[var(--color-surface-strong)]">
+                  <div className="h-full rounded-md bg-[var(--color-brand-primary)]" style={{ width: `${mobileProgress}%` }} />
+                </div>
+              </div>
+              <div className="mb-4 border-b border-[var(--color-border)] pb-3">
+                <h3 className="text-base font-semibold text-[var(--color-text-primary)]">{currentMobileField.groupTitle}</h3>
+                <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{currentMobileField.groupDescription}</p>
+              </div>
+              <SmartField
+                field={currentMobileField.field}
+                form={form}
+                requestType={requestType}
+                state={fieldStates[currentMobileField.field]}
+                updateForm={updateForm}
+                setFieldState={setFieldState}
+              />
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMobileQuestionIndex((current) => Math.max(0, current - 1))}
+                  disabled={mobileQuestionIndex === 0}
+                  className={secondaryButtonClass}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileQuestionIndex((current) => Math.min(mobileFields.length - 1, current + 1))}
+                  disabled={mobileQuestionIndex >= mobileFields.length - 1}
+                  className={secondaryButtonClass}
+                >
+                  Next
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          <div className="mt-4 grid gap-3">
+            <MinimumItemsPanel missingItems={missingItems} />
+            <SmartAssistancePanel suggestions={smartSuggestions} />
+          </div>
+        </div>
+
+        <div className="hidden gap-5 p-5 lg:grid xl:grid-cols-[minmax(0,1fr)_320px]">
           <div className="space-y-5">
             {requestType.fieldGroups.map((group) => (
               <section key={group.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -391,27 +565,8 @@ function SmartIntakeFormContent({
           </div>
 
           <aside className="space-y-3 xl:sticky xl:top-24 xl:self-start">
-            <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm shadow-[var(--color-shadow)]">
-              <div className="mb-3 flex items-center gap-2 text-[var(--color-brand-primary)]">
-                <Sparkles size={16} />
-                <h3 className="text-sm font-semibold uppercase tracking-[0.12em]">Minimum to submit</h3>
-              </div>
-              {missingItems.length > 0 ? (
-                <ul className="space-y-2 text-sm">
-                  {missingItems.map((item) => (
-                    <li key={item} className="flex items-center gap-2 text-[var(--color-warning)]">
-                      <AlertCircle size={15} />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="flex items-center gap-2 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm font-medium text-[var(--color-success)]">
-                  <CheckCircle2 size={15} />
-                  This request has enough information to submit.
-                </p>
-              )}
-            </section>
+            <MinimumItemsPanel missingItems={missingItems} />
+            <SmartAssistancePanel suggestions={smartSuggestions} />
 
             <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm shadow-[var(--color-shadow)]">
               <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Draft state</h3>
@@ -449,6 +604,60 @@ function SmartIntakeFormContent({
         </div>
       </section>
     </form>
+  );
+}
+
+function MinimumItemsPanel({ missingItems }: { missingItems: string[] }) {
+  return (
+    <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm shadow-[var(--color-shadow)]">
+      <div className="mb-3 flex items-center gap-2 text-[var(--color-brand-primary)]">
+        <Sparkles size={16} />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.12em]">Minimum to submit</h3>
+      </div>
+      {missingItems.length > 0 ? (
+        <ul className="space-y-2 text-sm">
+          {missingItems.map((item) => (
+            <li key={item} className="flex items-center gap-2 text-[var(--color-warning)]">
+              <AlertCircle size={15} />
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="flex items-center gap-2 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm font-medium text-[var(--color-success)]">
+          <CheckCircle2 size={15} />
+          This request has enough information to submit.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function SmartAssistancePanel({ suggestions }: { suggestions: SmartIntakeSuggestion[] }) {
+  return (
+    <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm shadow-[var(--color-shadow)]">
+      <div className="mb-3 flex items-center gap-2 text-[var(--color-brand-primary)]">
+        <Sparkles size={16} />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.12em]">Smart assistance</h3>
+      </div>
+      <div className="space-y-2">
+        {suggestions.length === 0 ? (
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3 text-sm text-[var(--color-text-secondary)]">
+            Add site, address, customer, load, or timing to unlock proactive checks.
+          </p>
+        ) : (
+          suggestions.map((suggestion) => (
+            <div key={suggestion.label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={suggestion.tone}>{suggestion.label}</StatusPill>
+                <span className="text-xs font-semibold text-[var(--color-text-secondary)]">{suggestion.confidence} confidence</span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{suggestion.body}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -537,6 +746,72 @@ function SmartField({
       </div>
     </div>
   );
+}
+
+function buildSmartIntakeSuggestions(
+  form: AssessmentFormState,
+  duplicateSuggestions: DuplicateRequestSuggestion[],
+): SmartIntakeSuggestion[] {
+  const suggestions: Array<SmartIntakeSuggestion | null> = [
+    duplicateSuggestions.length > 0
+      ? {
+          body: `${duplicateSuggestions.length} possible duplicate${duplicateSuggestions.length === 1 ? "" : "s"} found: ${duplicateSuggestions.map((duplicate) => `${duplicate.label} (${duplicate.reason})`).join("; ")}.`,
+          confidence: "High",
+          label: "Duplicate check",
+          tone: "warning",
+        }
+      : null,
+    form.state.trim().toUpperCase() === "TX" && form.marketRegion.trim().toUpperCase() !== "ERCOT"
+      ? {
+          body: "Texas site context usually maps to ERCOT unless the address is outside ERCOT territory. Consider ERCOT as the market region.",
+          confidence: "Medium",
+          label: "Market inference",
+          tone: "info",
+        }
+      : null,
+    !form.knownUtility.trim() && (form.address.trim() || form.county.trim())
+      ? {
+          body: "Utility can likely be inferred after address lookup or service-territory evidence. Mark this as to-confirm if the requester does not know it.",
+          confidence: "Medium",
+          label: "Utility suggestion",
+          tone: "info",
+        }
+      : null,
+    !form.knownTsp.trim() && (form.marketRegion.trim() || form.state.trim())
+      ? {
+          body: "TSP can be suggested from market/state context and nearby grid assets once GIS evidence is attached.",
+          confidence: form.marketRegion.trim().toUpperCase() === "ERCOT" ? "Medium" : "Low",
+          label: "TSP suggestion",
+          tone: "info",
+        }
+      : null,
+    Number(form.targetLoadMw) >= 75
+      ? {
+          body: "Large-load request will likely require expert review, stronger reliability assumptions, and clearer energization staging.",
+          confidence: "High",
+          label: "Expert review trigger",
+          tone: "warning",
+        }
+      : null,
+    form.address.trim() && !form.latitude.trim() && !form.longitude.trim()
+      ? {
+          body: "Address is present but coordinates are not. Use lookup so the grid and evidence workbenches can reason over proximity.",
+          confidence: "High",
+          label: "Location inference",
+          tone: "success",
+        }
+      : null,
+    form.existingStudiesSummary.trim() || form.existingPowerQuoteSummary.trim()
+      ? {
+          body: "Evidence context is already present. Submit can proceed with source details marked as provided in attachment if files are not entered yet.",
+          confidence: "Medium",
+          label: "Evidence shortcut",
+          tone: "success",
+        }
+      : null,
+  ];
+
+  return suggestions.filter((suggestion): suggestion is SmartIntakeSuggestion => Boolean(suggestion));
 }
 
 const fieldConfig: Partial<Record<keyof AssessmentFormState, {

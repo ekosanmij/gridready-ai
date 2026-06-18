@@ -150,3 +150,155 @@ export function FieldControl({
     </label>
   );
 }
+
+export function SplitPane({
+  aside,
+  children,
+  className,
+}: {
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cx("grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]", className)}>
+      <div className="min-w-0">{children}</div>
+      {aside ? <aside className="min-w-0 xl:sticky xl:top-24 xl:self-start">{aside}</aside> : null}
+    </div>
+  );
+}
+
+export function DrawerSurface({
+  children,
+  description,
+  open,
+  title,
+}: {
+  children: ReactNode;
+  description?: string;
+  open: boolean;
+  title: string;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <section className={cx(panelClass, "overflow-hidden")}>
+      <div className="border-b border-[var(--color-border)] px-4 py-3">
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
+        {description ? <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{description}</p> : null}
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+export function WorkItemPanel({
+  action,
+  children,
+  description,
+  eyebrow,
+  title,
+  tone = "neutral",
+}: {
+  action?: ReactNode;
+  children?: ReactNode;
+  description?: string;
+  eyebrow?: string;
+  title: string;
+  tone?: StatusTone;
+}) {
+  return (
+    <section className={cx(panelClass, "overflow-hidden")}>
+      <div className="flex flex-col gap-3 border-b border-[var(--color-border)] px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          {eyebrow ? <StatusPill tone={tone}>{eyebrow}</StatusPill> : null}
+          <h3 className="mt-2 text-base font-semibold text-[var(--color-text-primary)]">{title}</h3>
+          {description ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      {children ? <div className="p-4">{children}</div> : null}
+    </section>
+  );
+}
+
+export function Timeline({
+  emptyText = "No activity yet.",
+  items,
+}: {
+  emptyText?: string;
+  items: Array<{
+    body?: string;
+    id: string;
+    meta?: string;
+    title: string;
+    tone?: StatusTone;
+  }>;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <ol className="space-y-3">
+      {items.map((item) => (
+        <li key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)] gap-3">
+          <span className={cx("mt-1 h-3 w-3 rounded-full border", statusToneClass(item.tone ?? "neutral"))} />
+          <div className="min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-[var(--color-text-primary)]">{item.title}</p>
+              {item.meta ? <span className="text-xs font-medium text-[var(--color-text-secondary)]">{item.meta}</span> : null}
+            </div>
+            {item.body ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-secondary)]">{item.body}</p> : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function SegmentedControl<T extends string>({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: T) => void;
+  options: Array<{ label: string; value: T }>;
+  value: T;
+}) {
+  return (
+    <div>
+      <p className="sr-only">{label}</p>
+      <div className="flex flex-wrap gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-1">
+        {options.map((option) => {
+          const selected = option.value === value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              aria-pressed={selected}
+              className={cx(
+                "h-8 rounded px-3 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]",
+                selected
+                  ? "bg-[var(--color-surface)] text-[var(--color-brand-primary)] shadow-sm shadow-[var(--color-shadow)]"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

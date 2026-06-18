@@ -1,5 +1,5 @@
+import { AssessmentWorkspace } from "@/components/assessment-workspace/assessment-workspace";
 import { AppShell } from "@/components/app-shell/app-shell";
-import { AssessmentStatusPage } from "@/components/work-queue/assessment-status-page";
 
 export default async function RequestStatusRoute({
   params,
@@ -10,7 +10,7 @@ export default async function RequestStatusRoute({
 
   return (
     <AppShell eyebrow="Request tracking" title="Request status">
-      <AssessmentStatusPage assessmentId={requestId} />
+      <AssessmentWorkspace assessmentId={requestId} initialRole="customer" roleLocked />
     </AppShell>
   );
 }

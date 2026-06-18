@@ -83,6 +83,18 @@ export function subscribeThemePreference(onStoreChange: () => void) {
   };
 }
 
+export function subscribeHydrationChange() {
+  return () => {};
+}
+
+export function getClientHydrationSnapshot() {
+  return true;
+}
+
+export function getServerHydrationSnapshot() {
+  return false;
+}
+
 export function setThemePreference(theme: ThemePreference) {
   saveThemePreference(theme);
   applyThemePreference(theme);

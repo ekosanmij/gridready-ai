@@ -3,6 +3,7 @@
 import { AlertCircle, ClipboardList, FileText, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { GlobalSearch } from "@/components/global-search/global-search";
 import { RequestCatalog } from "@/components/request-catalog/request-catalog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MetricTile, primaryButtonClass, secondaryButtonClass } from "@/components/ui-primitives";
@@ -111,15 +112,9 @@ export function PortalHome() {
             <Search size={17} />
             <p className="text-xs font-semibold uppercase tracking-[0.14em]">Portal search</p>
           </div>
-          <label className="block">
-            <span className="sr-only">Search portal</span>
-            <input
-              className="h-11 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-brand-primary)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
-              placeholder="Search by site, customer, utility, report"
-            />
-          </label>
+          <GlobalSearch />
           <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-            Search is wired as a portal affordance in this slice. Full cross-record search lands with the command/search epic.
+            Requests, evidence, findings, and report sections are indexed together.
           </p>
         </aside>
       </section>
@@ -165,4 +160,3 @@ export function PortalHome() {
     </div>
   );
 }
-
