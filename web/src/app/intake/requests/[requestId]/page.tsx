@@ -10,7 +10,7 @@ export default async function RequestStatusRoute({
 
   return (
     <AppShell eyebrow="Request tracking" title="Request status">
-      <AssessmentWorkspace assessmentId={requestId} initialRole="customer" roleLocked />
+      <AssessmentWorkspace assessmentId={requestId} />
     </AppShell>
   );
 }

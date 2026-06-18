@@ -1,6 +1,6 @@
-# GridReady AI Intake Console
+# GridReady AI Workbench
 
-Internal MVP surface for creating, viewing, and updating GridReady AI site assessment intake records.
+Authenticated portal for intake, assessment operations, evidence, geospatial inference, and report delivery.
 
 ## Setup
 
@@ -27,9 +27,9 @@ Run the development server:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000/intake](http://localhost:3000/intake) and sign in with a Supabase Auth user.
 
-## Current MVP Scope
+## Workbench Scope
 
 - Assessment dashboard
 - Create site assessment intake
@@ -38,18 +38,23 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - Workflow status updates
 - Analyst notes
 - Document references
+- Persistent owner and SLA assignment
+- Private evidence upload and editing
+- Utility/TSP inference with explicit analyst acceptance
+- Report authoring and HTML/print-PDF export
+- Indexed cross-workbench search
 
-## Important
+## Authentication and roles
 
-This first slice uses the Supabase anon key from the browser. That is acceptable only for local/internal MVP testing while your Supabase permissions are still being shaped. Before storing confidential customer data, add Supabase Auth, row-level security policies, and private storage buckets.
+Supabase Auth protects `/intake/*`. Row-level security enforces `admin`, `analyst`, `reviewer`, and `customer` roles; the role shown in the UI is read from the authenticated profile and is not a client-side switch. Evidence is stored in the private `assessment-evidence` bucket and accessed with short-lived signed URLs.
 
-## Next Build Slices
+## Validation
 
-1. Checklist templates and checklist responses
-2. Evidence source library
-3. Grid assets and candidate POIs
-4. Scoring and findings
-5. Report sections and PDF generation
+```bash
+npm run lint
+npm test
+npm run build
+```
 
 ## Deploy
 

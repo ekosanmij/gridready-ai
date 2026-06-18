@@ -70,6 +70,7 @@ export type SiteRecord = {
 };
 
 export type AssessmentRecord = {
+  assignment_note: string | null;
   assessment_name: string;
   backup_generation_assumptions: string | null;
   battery_storage_assumptions: string | null;
@@ -88,9 +89,12 @@ export type AssessmentRecord = {
   known_utility: string | null;
   land_control_status: string | null;
   market_region: string;
+  owner_id: string | null;
   project_id: string;
   project_stage: string | null;
   site_id: string;
+  sla_days: number | null;
+  sla_due_at: string | null;
   status: AssessmentStatus;
   target_load_mw: number | null;
   updated_at: string;
@@ -301,6 +305,10 @@ export function getLifecycleProgress(status: AssessmentStatus) {
 }
 
 export function getLifecycleDueDate(assessment: AssessmentDetailRecord) {
+  if (assessment.sla_due_at) {
+    return assessment.sla_due_at;
+  }
+
   const lifecycle = getLifecycleState(assessment.status);
 
   if (lifecycle.slaDays === 0) {
@@ -336,7 +344,7 @@ export function getLifecycleFacts(assessment: AssessmentDetailRecord) {
     customerLabel: lifecycle.customerLabel,
     description: lifecycle.description,
     dueDate,
-    owner: lifecycle.owner,
+    owner: assessment.owner_id ? "Assigned team member" : lifecycle.owner,
     progress: getLifecycleProgress(assessment.status),
     slaLabel: dueDate ? formatWorkspaceDate(dueDate) : "No active SLA",
   };
