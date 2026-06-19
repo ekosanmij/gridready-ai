@@ -51,4 +51,29 @@ describe("production workbench integration contracts", () => {
     expect(migration).toContain("create or replace function public.search_portal");
     expect(migration).not.toContain("to anon, authenticated");
   });
+
+  it("adds explicit customer membership and same-organisation creation policies", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619100000_customer_tenancy_foundation.sql"), "utf8");
+    expect(migration).toContain("create table if not exists public.organisation_memberships");
+    expect(migration).toContain("add column if not exists is_active");
+    expect(migration).toContain("add column if not exists is_default");
+    expect(migration).toContain("create or replace function public.provision_customer_account");
+    expect(migration).toContain("create or replace function public.set_active_organisation");
+    expect(migration).toContain("create policy projects_customer_create");
+    expect(migration).toContain("create policy sites_customer_create");
+    expect(migration).toContain("create policy assessments_customer_create");
+    expect(migration).toContain("public.is_organisation_member");
+  });
+
+  it("adds server drafts, private draft uploads, and durable file metadata", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619120000_customer_intake_drafts_and_uploads.sql"), "utf8");
+    expect(migration).toContain("create table if not exists public.customer_intake_drafts");
+    expect(migration).toContain("create table if not exists public.customer_intake_files");
+    expect(migration).toContain("checksum_sha256");
+    expect(migration).toContain("malware_scan_status");
+    expect(migration).toContain("create policy customer_intake_storage_insert");
+    expect(migration).toContain("create policy customer_assessment_storage_insert");
+    expect(migration).toContain("create policy files_customer_create");
+    expect(migration).toContain("create policy files_customer_followup_create");
+  });
 });
