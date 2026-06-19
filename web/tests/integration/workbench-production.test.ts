@@ -65,6 +65,39 @@ describe("production workbench integration contracts", () => {
     expect(migration).toContain("public.is_organisation_member");
   });
 
+  it("repairs legacy membership role constraints for customer provisioning", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619190000_normalise_membership_roles.sql"), "utf8");
+    expect(migration).toContain("drop constraint if exists organisation_memberships_role_check");
+    expect(migration).toContain("alter column role type public.app_role");
+    expect(migration).toContain("when 'customer' then 'customer'::public.app_role");
+    expect(migration).toContain("add constraint organisation_memberships_role_check");
+  });
+
+  it("evaluates customer assessment ownership without nested RLS ambiguity", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619200000_repair_customer_assessment_insert_policy.sql"), "utf8");
+    expect(migration).toContain("create or replace function public.can_submit_customer_intake_assessment");
+    expect(migration).toContain("set row_security = off");
+    expect(migration).toContain("d.user_id = auth.uid()");
+    expect(migration).toContain("s.organisation_id = p.organisation_id");
+    expect(migration).toContain("public.can_submit_customer_intake_assessment(");
+  });
+
+  it("keeps provisioning output names out of membership conflict targets", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619210000_repair_provisioning_variable_conflict.sql"), "utf8");
+    expect(migration).toContain("create or replace function public.provision_customer_account");
+    expect(migration).toContain("update public.organisation_memberships m");
+    expect(migration).toContain("if not found then");
+    expect(migration).not.toContain("on conflict (user_id, organisation_id)");
+  });
+
+  it("allows customer assessment inserts to return without a same-table policy lookup", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619220000_repair_assessment_insert_returning_policy.sql"), "utf8");
+    expect(migration).toContain("create or replace function public.can_access_assessment_project");
+    expect(migration).toContain("where p.id = p_project_id");
+    expect(migration).toContain("using (public.can_access_assessment_project(project_id))");
+    expect(migration).not.toContain("using (public.can_access_assessment(id))");
+  });
+
   it("adds server drafts, private draft uploads, and durable file metadata", () => {
     const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619120000_customer_intake_drafts_and_uploads.sql"), "utf8");
     expect(migration).toContain("create table if not exists public.customer_intake_drafts");

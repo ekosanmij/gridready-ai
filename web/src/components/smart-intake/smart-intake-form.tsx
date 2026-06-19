@@ -705,9 +705,11 @@ function SmartIntakeFormContent({
         throw siteError;
       }
 
-      const { data: assessment, error: assessmentError } = await supabase
+      const assessmentId = crypto.randomUUID();
+      const { error: assessmentError } = await supabase
         .from("site_assessments")
         .insert({
+          id: assessmentId,
           assessment_name: assessmentName,
           backup_generation_assumptions: form.backupGenerationAssumptions.trim() || null,
           battery_storage_assumptions: form.batteryStorageAssumptions.trim() || null,
@@ -732,30 +734,28 @@ function SmartIntakeFormContent({
           target_load_mw: parseOptionalNumber(form.targetLoadMw),
           water_cooling_notes: form.waterCoolingNotes.trim() || null,
           workload_flexibility_assumptions: form.workloadFlexibilityAssumptions.trim() || null,
-        })
-        .select("id")
-        .single();
+        });
 
       if (assessmentError) {
         throw assessmentError;
       }
 
       await markCustomerIntakeDraftSubmitted(supabase, {
-        assessmentId: assessment.id,
+        assessmentId,
         draftId: persistedDraft.id,
         organisationId: organisation.organisationId,
       });
       setDraftStatus("submitted");
-      setSubmittedAssessmentId(assessment.id);
+      setSubmittedAssessmentId(assessmentId);
 
       await linkCustomerIntakeFiles(supabase, {
-        assessmentId: assessment.id,
+        assessmentId,
         draftId: persistedDraft.id,
         userId: user.id,
       });
 
       window.localStorage.removeItem(draftKey);
-      router.push(`/intake/requests/${assessment.id}`);
+      router.push(`/intake/requests/${assessmentId}`);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Could not submit request.");
     } finally {
