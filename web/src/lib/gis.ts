@@ -85,6 +85,40 @@ export type GridAssetRecord = {
   voltage_kv: number | null;
 };
 
+export type GeospatialPolygonGeometry =
+  | { coordinates: number[][][]; type: "Polygon" }
+  | { coordinates: number[][][][]; type: "MultiPolygon" };
+
+export type SiteGeospatialContext = {
+  coverage_status: "no_active_dataset_match" | "territory_and_zone_matched" | "territory_matched_zone_unavailable" | "zone_matched_territory_unavailable";
+  pricing_zone: string | null;
+  territory_dataset_key: string | null;
+  territory_dataset_name: string | null;
+  territory_dataset_version: string | null;
+  territory_geojson: GeospatialPolygonGeometry | null;
+  territory_limitations: string | null;
+  territory_source_url: string | null;
+  tsp_name: string | null;
+  utility_confidence: "high" | "low" | "medium" | null;
+  utility_name: string | null;
+  zone_confidence: "high" | "low" | "medium" | null;
+  zone_dataset_key: string | null;
+  zone_dataset_name: string | null;
+  zone_dataset_version: string | null;
+  zone_geojson: GeospatialPolygonGeometry | null;
+  zone_limitations: string | null;
+  zone_source_url: string | null;
+};
+
+export type GeospatialContextFeatureCollection = {
+  features: Array<{
+    geometry: GeospatialPolygonGeometry;
+    properties: { kind: "market_zone" | "utility_territory"; label: string };
+    type: "Feature";
+  }>;
+  type: "FeatureCollection";
+};
+
 type RadiusFeature = {
   geometry: {
     coordinates: number[][][];
@@ -122,6 +156,49 @@ export function gridAssetTypeLabel(value: string) {
 
 export function confidenceLevelLabel(value: string) {
   return confidenceLevels.find((item) => item.value === value)?.label ?? value;
+}
+
+export function geospatialCoverageLabel(status: SiteGeospatialContext["coverage_status"]) {
+  return {
+    no_active_dataset_match: "No active dataset match",
+    territory_and_zone_matched: "Territory and zone matched",
+    territory_matched_zone_unavailable: "Territory matched; zone unavailable",
+    zone_matched_territory_unavailable: "Zone matched; territory unavailable",
+  }[status];
+}
+
+export function createGeospatialContextFeatureCollection(
+  context: SiteGeospatialContext | null | undefined,
+): GeospatialContextFeatureCollection {
+  if (!context) {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  const features: GeospatialContextFeatureCollection["features"] = [];
+
+  if (context.territory_geojson) {
+    features.push({
+      type: "Feature",
+      geometry: context.territory_geojson,
+      properties: {
+        kind: "utility_territory",
+        label: context.utility_name ?? "Utility territory",
+      },
+    });
+  }
+
+  if (context.zone_geojson) {
+    features.push({
+      type: "Feature",
+      geometry: context.zone_geojson,
+      properties: {
+        kind: "market_zone",
+        label: context.pricing_zone ?? "Market zone",
+      },
+    });
+  }
+
+  return { type: "FeatureCollection", features };
 }
 
 export function parseNumericInput(value: string) {
