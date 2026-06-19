@@ -9,6 +9,7 @@ import {
   Gauge,
   Loader2,
   MapPin,
+  Save,
   ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
@@ -22,7 +23,9 @@ import {
   Timeline,
   WorkItemPanel,
   cx,
+  inputClass,
   panelClass,
+  primaryButtonClass,
   secondaryButtonClass,
 } from "@/components/ui-primitives";
 import { type AppRole, useAuth } from "@/components/auth/auth-provider";
@@ -33,6 +36,7 @@ import { SmartAssistant } from "@/components/assessment-workspace/smart-assistan
 import {
   ActivityItem,
   AssessmentDetailRecord,
+  AssessmentEventRecord,
   AssessmentWorkspaceData,
   ContactRecord,
   FileRecord,
@@ -61,7 +65,8 @@ import {
   riskLevelLabel,
 } from "@/lib/evidence";
 import { GridAssetRecord, formatDistanceMiles, gridAssetTypeLabel } from "@/lib/gis";
-import { statusLabel } from "@/lib/intake";
+import { AssessmentStatus, assessmentStatuses, statusLabel } from "@/lib/intake";
+import { allowedAssessmentTransitions, transitionAssessmentStatus } from "@/lib/assessment-workflow";
 import {
   AssessmentReportExportRecord,
   AssessmentReportSectionRecord,
@@ -170,6 +175,7 @@ export function AssessmentWorkspace({
           { data: sectionData, error: sectionError },
           { data: exportData, error: exportError },
           { data: statusHistoryData, error: statusHistoryError },
+          { data: assessmentEventData, error: assessmentEventError },
           { data: duplicateCandidateData, error: duplicateError },
         ] = await Promise.all([
           supabase
@@ -231,6 +237,11 @@ export function AssessmentWorkspace({
             .eq("site_assessment_id", assessmentId)
             .order("created_at", { ascending: false }),
           supabase
+            .from("assessment_events")
+            .select("id, event_type, actor_role, visibility, source_table, source_record_id, from_state, to_state, reason, metadata, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
             .from("site_assessments")
             .select(`
               *,
@@ -256,6 +267,7 @@ export function AssessmentWorkspace({
           sectionError ||
           exportError ||
           statusHistoryError ||
+          assessmentEventError ||
           duplicateError
         ) {
           throw (
@@ -270,6 +282,7 @@ export function AssessmentWorkspace({
             sectionError ??
             exportError ??
             statusHistoryError ??
+            assessmentEventError ??
             duplicateError
           );
         }
@@ -298,6 +311,7 @@ export function AssessmentWorkspace({
         const assessmentWithContact = { ...assessment, contact };
         const workspaceData = buildWorkspaceData({
           assessment: assessmentWithContact,
+          assessmentEvents: (assessmentEventData ?? []) as AssessmentEventRecord[],
           duplicateSignals: buildDuplicateSignals(assessmentWithContact, (duplicateCandidateData ?? []) as AssessmentDetailRecord[]),
           evidenceLinks: links,
           evidenceSources: (sourceData ?? []) as EvidenceSourceRecord[],
@@ -542,6 +556,17 @@ function ContextRail({
         />
       </WorkItemPanel>
 
+      {role !== "customer" ? (
+        <WorkItemPanel title="Workflow status" eyebrow="Controlled transition" tone="info">
+          <WorkflowStatusControls
+            key={data.assessment.status}
+            data={data}
+            role={appRole}
+            onChanged={onRefresh}
+          />
+        </WorkItemPanel>
+      ) : null}
+
       <SmartAssistant assessment={data.assessment} gridAssets={data.gridAssets} role={appRole} signals={smartSignals} onApplied={onRefresh} />
 
       <WorkItemPanel title="Recent activity" eyebrow={`${activityItems.length} events`} tone="info">
@@ -555,6 +580,77 @@ function ContextRail({
           }))}
         />
       </WorkItemPanel>
+    </div>
+  );
+}
+
+function WorkflowStatusControls({
+  data,
+  onChanged,
+  role,
+}: {
+  data: AssessmentWorkspaceData;
+  onChanged: () => void;
+  role: AppRole;
+}) {
+  const transitions = allowedAssessmentTransitions(data.assessment.status, role).filter(
+    (status) => status !== "delivered" || deliveryGatesAreComplete(getDeliveryGates(data)),
+  );
+  const [nextStatus, setNextStatus] = useState<AssessmentStatus>(transitions[0] ?? data.assessment.status);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  if (transitions.length === 0) {
+    return <p className="text-sm text-[var(--color-text-secondary)]">No status transitions are available for this role.</p>;
+  }
+
+  async function save() {
+    if (!supabase) {
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      await transitionAssessmentStatus(supabase, {
+        assessmentId: data.assessment.id,
+        reason: reason.trim() || "Workflow status changed in assessment workspace",
+        source: "assessment_workspace",
+        toStatus: nextStatus,
+      });
+      onChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not update workflow status.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <select
+        aria-label="Next workflow status"
+        className={inputClass}
+        value={nextStatus}
+        onChange={(event) => setNextStatus(event.target.value as AssessmentStatus)}
+      >
+        {assessmentStatuses.filter((status) => transitions.includes(status.value)).map((status) => (
+          <option key={status.value} value={status.value}>{status.label}</option>
+        ))}
+      </select>
+      <input
+        aria-label="Transition reason"
+        className={inputClass}
+        placeholder="Reason (optional)"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+      />
+      {error ? <p className="text-xs font-semibold text-rose-700">{error}</p> : null}
+      <button type="button" className={primaryButtonClass} disabled={saving} onClick={() => void save()}>
+        {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+        Update status
+      </button>
     </div>
   );
 }

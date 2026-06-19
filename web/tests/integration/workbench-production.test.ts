@@ -76,4 +76,16 @@ describe("production workbench integration contracts", () => {
     expect(migration).toContain("create policy files_customer_create");
     expect(migration).toContain("create policy files_customer_followup_create");
   });
+
+  it("adds controlled lifecycle transitions, append-only events, and leased background jobs", () => {
+    const migration = readFileSync(resolve(process.cwd(), "../supabase/migrations/20260619140000_workflow_audit_background_jobs.sql"), "utf8");
+    expect(migration).toContain("create table if not exists public.assessment_status_transitions");
+    expect(migration).toContain("create or replace function public.transition_assessment_status");
+    expect(migration).toContain("create table if not exists public.assessment_events");
+    expect(migration).toContain("create table if not exists public.background_jobs");
+    expect(migration).toContain("for update skip locked");
+    expect(migration).toContain("j.locked_at < now() - interval '15 minutes'");
+    expect(migration).toContain("if v_scan_status = 'clean' then");
+    expect(migration).toContain("grant execute on function public.claim_background_jobs");
+  });
 });
