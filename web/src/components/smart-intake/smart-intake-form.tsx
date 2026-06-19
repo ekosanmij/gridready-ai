@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Loader2, Save, Send, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Loader2, Save, Send, Sparkles, Trash2, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AddressAutocompleteField } from "@/components/address-autocomplete-field";
+import { useAuth } from "@/components/auth/auth-provider";
 import {
   FieldControl,
   StatusPill,
@@ -27,6 +28,20 @@ import {
   IntakeFieldState,
   IntakeRequestType,
 } from "@/lib/intake-request-types";
+import { ensureCustomerOrganisation } from "@/lib/customer-tenancy";
+import {
+  customerEvidenceAccept,
+  discardCustomerIntakeDraft,
+  formatFileSize,
+  linkCustomerIntakeFiles,
+  listCustomerIntakeFiles,
+  loadCustomerIntakeDraft,
+  markCustomerIntakeDraftSubmitted,
+  removeCustomerIntakeFile,
+  saveCustomerIntakeDraft,
+  uploadCustomerIntakeFile,
+  type CustomerIntakeFile,
+} from "@/lib/customer-intake-drafts";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import {
   getClientHydrationSnapshot,
@@ -56,7 +71,10 @@ const smartIntakeDraftVersion = 1;
 type SmartIntakeDraft = {
   fieldStates: Partial<Record<keyof AssessmentFormState, IntakeFieldState>>;
   form: AssessmentFormState;
+  id: string;
   savedAt: string;
+  status: "active" | "submitted";
+  submittedAssessmentId: string | null;
 };
 
 type DuplicateRequestSuggestion = {
@@ -79,7 +97,10 @@ function createBlankSmartIntakeDraft(requestType: IntakeRequestType): SmartIntak
       ...blankAssessmentForm,
       projectType: requestProjectType[requestType.id],
     },
+    id: "",
     savedAt: "",
+    status: "active",
+    submittedAssessmentId: null,
   };
 }
 
@@ -94,7 +115,10 @@ function parseSmartIntakeDraft(savedDraft: string, requestType: IntakeRequestTyp
     const parsed = JSON.parse(savedDraft) as {
       fieldStates?: Partial<Record<keyof AssessmentFormState, IntakeFieldState>>;
       form?: AssessmentFormState;
+      id?: string;
       savedAt?: string;
+      status?: "active" | "submitted";
+      submittedAssessmentId?: string | null;
       version?: number;
     };
 
@@ -109,7 +133,10 @@ function parseSmartIntakeDraft(savedDraft: string, requestType: IntakeRequestTyp
         ...parsed.form,
         projectType: requestProjectType[requestType.id],
       },
+      id: parsed.id ?? "",
       savedAt: parsed.savedAt ?? "",
+      status: parsed.status ?? "active",
+      submittedAssessmentId: parsed.submittedAssessmentId ?? null,
     };
   } catch {
     return fallback;
@@ -175,18 +202,28 @@ function SmartIntakeFormContent({
   requestType: IntakeRequestType;
 }) {
   const router = useRouter();
+  const { organisationId, reloadAccount, user } = useAuth();
   const [form, setForm] = useState<AssessmentFormState>(initialDraft.form);
   const [fieldStates, setFieldStates] = useState<Partial<Record<keyof AssessmentFormState, IntakeFieldState>>>(initialDraft.fieldStates);
   const [error, setError] = useState("");
+  const [draftError, setDraftError] = useState("");
+  const [draftFiles, setDraftFiles] = useState<CustomerIntakeFile[]>([]);
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [draftId, setDraftId] = useState(initialDraft.id);
+  const [draftReady, setDraftReady] = useState(!hasSupabaseConfig);
+  const [draftStatus, setDraftStatus] = useState<"active" | "submitted">(initialDraft.status);
+  const [submittedAssessmentId, setSubmittedAssessmentId] = useState<string | null>(initialDraft.submittedAssessmentId);
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingFileName, setUploadingFileName] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [mobileQuestionIndex, setMobileQuestionIndex] = useState(0);
   const [duplicateSuggestions, setDuplicateSuggestions] = useState<DuplicateRequestSuggestion[]>([]);
 
   const missingItems = useMemo(() => getMissingItems(form, requestType), [form, requestType]);
   const completenessScore = useMemo(() => calculateCompletenessScore(form), [form]);
-  const canSubmit = missingItems.length === 0 && !submitting;
+  const canSubmit = !submitting && (Boolean(submittedAssessmentId) || missingItems.length === 0);
   const mobileFields = useMemo(
     () =>
       requestType.fieldGroups.flatMap((group) =>
@@ -204,6 +241,121 @@ function SmartIntakeFormContent({
     () => buildSmartIntakeSuggestions(form, duplicateSuggestions),
     [duplicateSuggestions, form],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function recoverServerDraft() {
+      if (!supabase || !user) {
+        return;
+      }
+
+      try {
+        const recovered = await loadCustomerIntakeDraft(supabase, {
+          draftId: initialDraft.id || undefined,
+          fallbackForm: initialDraft.form,
+          requestType: requestType.id,
+          userId: user.id,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        if (recovered) {
+          setDraftId(recovered.id);
+          setDraftStatus(recovered.status === "submitted" ? "submitted" : "active");
+          setSubmittedAssessmentId(recovered.submittedAssessmentId);
+          if (new Date(recovered.savedAt).getTime() >= new Date(initialDraft.savedAt || 0).getTime()) {
+            setForm(recovered.form);
+            setFieldStates(recovered.fieldStates);
+            setSavedAt(recovered.savedAt);
+          }
+          setDraftFiles(await listCustomerIntakeFiles(supabase, recovered.id));
+        } else {
+          setDraftId(initialDraft.id || crypto.randomUUID());
+        }
+        setDraftError("");
+      } catch (recoverError) {
+        if (!cancelled) {
+          setDraftError(recoverError instanceof Error ? recoverError.message : "Could not recover the server draft.");
+        }
+      } finally {
+        if (!cancelled) {
+          setDraftReady(true);
+        }
+      }
+    }
+
+    void recoverServerDraft();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialDraft, requestType.id, user]);
+
+  const persistDraft = useCallback(async (showSaving = false) => {
+    if (draftStatus !== "active") {
+      return null;
+    }
+
+    const nextDraftId = draftId || crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    const localDraft = {
+      fieldStates,
+      form,
+      id: nextDraftId,
+      savedAt: timestamp,
+      status: "active" as const,
+      submittedAssessmentId: null,
+      version: smartIntakeDraftVersion,
+    };
+    window.localStorage.setItem(draftKey, JSON.stringify(localDraft));
+    setDraftId(nextDraftId);
+
+    if (!supabase || !user) {
+      setSavedAt(timestamp);
+      setDraftDirty(false);
+      return { ...localDraft, userId: user?.id ?? "" };
+    }
+
+    if (showSaving) {
+      setSaving(true);
+    }
+    try {
+      const saved = await saveCustomerIntakeDraft(supabase, {
+        draftId: nextDraftId,
+        fieldStates,
+        form,
+        organisationId,
+        requestType: requestType.id,
+        userId: user.id,
+      });
+      setSavedAt(saved.savedAt);
+      setDraftDirty(false);
+      setDraftError("");
+      window.localStorage.setItem(draftKey, JSON.stringify({ ...localDraft, savedAt: saved.savedAt }));
+      return saved;
+    } catch (saveError) {
+      setSavedAt(timestamp);
+      setDraftError(`${saveError instanceof Error ? saveError.message : "Server draft save failed."} A local recovery copy was kept.`);
+      return null;
+    } finally {
+      if (showSaving) {
+        setSaving(false);
+      }
+    }
+  }, [draftId, draftKey, draftStatus, fieldStates, form, organisationId, requestType.id, user]);
+
+  useEffect(() => {
+    if (!draftReady || !draftDirty || draftStatus !== "active") {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void persistDraft(false);
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [draftDirty, draftReady, draftStatus, persistDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,24 +451,137 @@ function SmartIntakeFormContent({
 
       return next;
     });
+    setDraftDirty(true);
     setError("");
   }
 
   function setFieldState(field: keyof AssessmentFormState, value: IntakeFieldState) {
     setFieldStates((current) => ({ ...current, [field]: value }));
+    setDraftDirty(true);
   }
 
-  function saveDraft() {
-    const timestamp = new Date().toISOString();
-    window.localStorage.setItem(draftKey, JSON.stringify({ fieldStates, form, savedAt: timestamp, version: smartIntakeDraftVersion }));
-    setSavedAt(timestamp);
+  async function discardDraft() {
+    setSaving(true);
+    setDraftError("");
+    try {
+      if (supabase && draftId) {
+        if (draftFiles.length > 0) {
+          const { error: storageError } = await supabase.storage
+            .from("assessment-evidence")
+            .remove(draftFiles.map((file) => file.storagePath));
+          if (storageError) {
+            throw storageError;
+          }
+        }
+        await discardCustomerIntakeDraft(supabase, draftId);
+      }
+
+      const blankDraft = createBlankSmartIntakeDraft(requestType);
+      window.localStorage.removeItem(draftKey);
+      setForm(blankDraft.form);
+      setFieldStates(blankDraft.fieldStates);
+      setDraftFiles([]);
+      setDraftId(crypto.randomUUID());
+      setDraftStatus("active");
+      setSubmittedAssessmentId(null);
+      setSavedAt("");
+      setDraftDirty(false);
+    } catch (discardError) {
+      setDraftError(discardError instanceof Error ? discardError.message : "Could not discard the draft.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addFiles(files: FileList | null) {
+    if (!files?.length || !supabase || !user) {
+      return;
+    }
+
+    setDraftError("");
+    const saved = await persistDraft(true);
+    if (!saved) {
+      return;
+    }
+
+    for (const file of Array.from(files)) {
+      setUploadingFileName(file.name);
+      setUploadProgress(0);
+      try {
+        const uploaded = await uploadCustomerIntakeFile(supabase, {
+          draftId: saved.id,
+          file,
+          userId: user.id,
+        }, setUploadProgress);
+        setDraftFiles((current) => [...current, uploaded]);
+      } catch (uploadError) {
+        setDraftError(uploadError instanceof Error ? uploadError.message : `Could not upload ${file.name}.`);
+        break;
+      }
+    }
+
+    setUploadingFileName("");
+    setUploadProgress(0);
+  }
+
+  async function downloadDraftFile(file: CustomerIntakeFile) {
+    if (!supabase) {
+      return;
+    }
+    const { data, error: signedError } = await supabase.storage
+      .from("assessment-evidence")
+      .createSignedUrl(file.storagePath, 60);
+    if (signedError) {
+      setDraftError(signedError.message);
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function removeDraftFile(file: CustomerIntakeFile) {
+    if (!supabase) {
+      return;
+    }
+    setDraftError("");
+    try {
+      await removeCustomerIntakeFile(supabase, file);
+      setDraftFiles((current) => current.filter((item) => item.id !== file.id));
+    } catch (removeError) {
+      setDraftError(removeError instanceof Error ? removeError.message : "Could not remove the file.");
+    }
   }
 
   async function submitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (submittedAssessmentId) {
+      if (supabase && user && draftId) {
+        setSubmitting(true);
+        try {
+          await linkCustomerIntakeFiles(supabase, {
+            assessmentId: submittedAssessmentId,
+            draftId,
+            userId: user.id,
+          });
+          window.localStorage.removeItem(draftKey);
+          router.push(`/intake/requests/${submittedAssessmentId}`);
+        } catch (linkError) {
+          setError(linkError instanceof Error ? linkError.message : "Could not finish linking the uploaded files.");
+        } finally {
+          setSubmitting(false);
+        }
+      } else {
+        router.push(`/intake/requests/${submittedAssessmentId}`);
+      }
+      return;
+    }
+
     if (!hasSupabaseConfig || !supabase) {
       setError("Supabase is not configured. Save this request as a draft until the backend is available.");
+      return;
+    }
+    if (!user) {
+      setError("Your authenticated session is not ready. Sign in again before submitting.");
       return;
     }
 
@@ -334,25 +599,48 @@ function SmartIntakeFormContent({
     setSaving(true);
     setError("");
 
-    const now = new Date().toISOString();
     const organisationName = form.organisationName.trim();
     const projectName = form.projectName.trim() || form.assessmentName.trim() || form.siteName.trim() || requestType.title;
     const siteName = form.siteName.trim() || form.address.trim() || form.assessmentName.trim() || projectName;
     const assessmentName = form.assessmentName.trim() || `${siteName} assessment`;
-    const nextStatus = requestType.id === "single-site-screen" ? suggestedIntakeStatus(form) : requestType.defaultStatus;
+    const nextStatus = suggestedIntakeStatus(form);
 
     try {
-      const { data: organisation, error: organisationError } = await supabase
-        .from("organisations")
-        .insert({
-          name: organisationName,
-          organisation_type: form.organisationType || "developer",
-        })
-        .select("id")
-        .single();
+      const persistedDraft = await persistDraft(false);
+      if (!persistedDraft) {
+        throw new Error("The server draft could not be saved. Submission was stopped to prevent a duplicate assessment.");
+      }
 
-      if (organisationError) {
-        throw organisationError;
+      const organisation = await ensureCustomerOrganisation(supabase, {
+        organisationName,
+        organisationType: form.organisationType || "developer",
+      });
+      await reloadAccount();
+
+      const { data: existingAssessment, error: existingAssessmentError } = await supabase
+        .from("site_assessments")
+        .select("id")
+        .eq("customer_intake_draft_id", persistedDraft.id)
+        .maybeSingle();
+      if (existingAssessmentError) {
+        throw existingAssessmentError;
+      }
+      if (existingAssessment?.id) {
+        await markCustomerIntakeDraftSubmitted(supabase, {
+          assessmentId: existingAssessment.id,
+          draftId: persistedDraft.id,
+          organisationId: organisation.organisationId,
+        });
+        setDraftStatus("submitted");
+        setSubmittedAssessmentId(existingAssessment.id);
+        await linkCustomerIntakeFiles(supabase, {
+          assessmentId: existingAssessment.id,
+          draftId: persistedDraft.id,
+          userId: user.id,
+        });
+        window.localStorage.removeItem(draftKey);
+        router.push(`/intake/requests/${existingAssessment.id}`);
+        return;
       }
 
       const { data: contact, error: contactError } = await supabase
@@ -361,7 +649,7 @@ function SmartIntakeFormContent({
           email: form.contactEmail.trim() || null,
           is_primary: true,
           name: form.contactName.trim() || form.contactEmail.trim(),
-          organisation_id: organisation.id,
+          organisation_id: organisation.organisationId,
           phone: form.contactPhone.trim() || null,
           role_title: form.contactRoleTitle.trim() || null,
         })
@@ -385,7 +673,7 @@ function SmartIntakeFormContent({
             .join("\n\n"),
           lead_contact_id: contact.id,
           name: projectName,
-          organisation_id: organisation.id,
+          organisation_id: organisation.organisationId,
           project_type: requestProjectType[requestType.id],
           status: "active",
         })
@@ -405,6 +693,7 @@ function SmartIntakeFormContent({
           county: form.county.trim() || null,
           latitude: parseOptionalNumber(form.latitude),
           longitude: parseOptionalNumber(form.longitude),
+          organisation_id: organisation.organisationId,
           parcel_id: form.parcelId.trim() || null,
           site_name: siteName,
           state: form.state.trim() || "TX",
@@ -424,6 +713,7 @@ function SmartIntakeFormContent({
           battery_storage_assumptions: form.batteryStorageAssumptions.trim() || null,
           confidentiality_status: form.confidentialityStatus,
           curtailment_willingness: form.curtailmentWillingness || null,
+          customer_intake_draft_id: persistedDraft.id,
           desired_energization_date: form.desiredEnergizationDate || null,
           existing_power_quote_summary: form.existingPowerQuoteSummary.trim() || null,
           existing_studies_summary: form.existingStudiesSummary.trim() || null,
@@ -450,17 +740,31 @@ function SmartIntakeFormContent({
         throw assessmentError;
       }
 
-      await supabase.from("status_history").insert({
+      await markCustomerIntakeDraftSubmitted(supabase, {
+        assessmentId: assessment.id,
+        draftId: persistedDraft.id,
+        organisationId: organisation.organisationId,
+      });
+      setDraftStatus("submitted");
+      setSubmittedAssessmentId(assessment.id);
+
+      const { error: historyError } = await supabase.from("status_history").insert({
         from_status: null,
         reason: `Assessment created from ${requestType.title}`,
         site_assessment_id: assessment.id,
         to_status: nextStatus,
       });
+      if (historyError) {
+        throw historyError;
+      }
 
-      window.localStorage.setItem(
-        draftKey,
-        JSON.stringify({ fieldStates, form, savedAt: now, submittedAt: now, version: smartIntakeDraftVersion }),
-      );
+      await linkCustomerIntakeFiles(supabase, {
+        assessmentId: assessment.id,
+        draftId: persistedDraft.id,
+        userId: user.id,
+      });
+
+      window.localStorage.removeItem(draftKey);
       router.push(`/intake/requests/${assessment.id}`);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Could not submit request.");
@@ -481,7 +785,7 @@ function SmartIntakeFormContent({
           </div>
           <aside className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-3">
             <div className="mb-3 flex flex-wrap gap-2">
-              <StatusPill tone={canSubmit ? "success" : "warning"}>{canSubmit ? "Ready to submit" : "Needs minimum inputs"}</StatusPill>
+              <StatusPill tone={canSubmit ? "success" : "warning"}>{submittedAssessmentId ? "Submitted" : canSubmit ? "Ready to submit" : "Needs minimum inputs"}</StatusPill>
               <StatusPill tone="info">{completenessScore}% complete</StatusPill>
             </div>
             <p className="text-sm leading-6 text-[var(--color-text-secondary)]">{requestType.expectedOutput}</p>
@@ -571,15 +875,97 @@ function SmartIntakeFormContent({
             <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm shadow-[var(--color-shadow)]">
               <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Draft state</h3>
               <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {savedAt ? `Saved ${new Date(savedAt).toLocaleString()}` : "No local draft saved yet."}
+                {savedAt ? `Saved ${new Date(savedAt).toLocaleString()}` : "Not saved yet."}
               </p>
-              <button type="button" onClick={saveDraft} className={secondaryButtonClass}>
-                <Save size={16} />
-                Save draft
-              </button>
+              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Changes autosave to the server, with a local recovery copy.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => void persistDraft(true)} className={secondaryButtonClass}>
+                  <Save size={16} />
+                  Save now
+                </button>
+                <button type="button" onClick={() => void discardDraft()} className={secondaryButtonClass}>
+                  <Trash2 size={16} />
+                  Discard
+                </button>
+              </div>
             </section>
           </aside>
         </div>
+
+        <section className="mx-5 mb-5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="font-semibold text-[var(--color-text-primary)]">Supporting files</h3>
+              <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">Private files up to 50 MB. PDF, DOCX, XLSX, CSV, KML/KMZ, ZIP, GeoJSON and common images are accepted.</p>
+            </div>
+            <label className={`${secondaryButtonClass} cursor-pointer`}>
+              <Upload size={16} />
+              Add files
+              <input
+                accept={customerEvidenceAccept}
+                className="sr-only"
+                disabled={Boolean(uploadingFileName) || draftStatus !== "active"}
+                multiple
+                type="file"
+                onChange={(event) => {
+                  void addFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+
+          {uploadingFileName ? (
+            <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate font-medium text-[var(--color-text-primary)]">Uploading {uploadingFileName}</span>
+                <span className="text-[var(--color-text-secondary)]">{uploadProgress}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--color-surface-strong)]">
+                <div className="h-full rounded-full bg-[var(--color-brand-primary)]" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            </div>
+          ) : null}
+
+          {draftFiles.length > 0 ? (
+            <div className="mt-4 space-y-2">
+              {draftFiles.map((file) => (
+                <article key={file.id} className="flex flex-col gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{file.originalFilename}</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{formatFileSize(file.sizeBytes)} · Processing: {file.processingStatus} · Malware scan: {file.malwareScanStatus}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button type="button" className={secondaryButtonClass} onClick={() => void downloadDraftFile(file)}>
+                      <Download size={15} />
+                      Open
+                    </button>
+                    {draftStatus === "active" ? (
+                      <button type="button" className={secondaryButtonClass} onClick={() => void removeDraftFile(file)}>
+                        <Trash2 size={15} />
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-[var(--color-text-secondary)]">No supporting files attached.</p>
+          )}
+        </section>
+
+        {submittedAssessmentId ? (
+          <div className="mx-5 mb-5 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-3 text-sm font-medium text-[var(--color-success)]">
+            This draft has already created an assessment. Continue to the request instead of submitting it again.
+          </div>
+        ) : null}
+
+        {draftError ? (
+          <div className="mx-5 mb-5 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm font-medium text-[var(--color-warning)]">
+            {draftError}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="mx-5 mb-5 rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-4 py-3 text-sm font-medium text-[var(--color-danger)]">
@@ -592,13 +978,13 @@ function SmartIntakeFormContent({
             Back to catalog
           </Link>
           <div className="flex flex-wrap gap-2 sm:justify-end">
-            <button type="button" onClick={saveDraft} disabled={saving} className={secondaryButtonClass}>
+            <button type="button" onClick={() => void persistDraft(true)} disabled={saving || draftStatus !== "active"} className={secondaryButtonClass}>
               {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-              Save draft
+              Save now
             </button>
             <button type="submit" disabled={!canSubmit} className={primaryButtonClass}>
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
-              Submit request
+              {submittedAssessmentId ? "Open request" : "Submit request"}
             </button>
           </div>
         </div>
