@@ -187,12 +187,13 @@ import {
   reviewStatusLabel,
   reviewStatusTone,
   reviewStatuses,
-  scoreModules,
+  scoreComponents,
   scoreTone,
   validateScoreDraft,
   verdictLabel,
   verdictOptions,
 } from "@/lib/scorecard";
+import { saveAssessmentScores, saveAssessmentVerdict } from "@/lib/scorecard-service";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import {
   ThemePreference,
@@ -1349,12 +1350,12 @@ export function IntakeWorkspace() {
       ] = await Promise.all([
         supabase
           .from("assessment_scores")
-          .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, created_at, updated_at")
+          .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, calculation_origin, is_derived, methodology_version_id, weight, weighted_contribution, created_at, updated_at")
           .eq("site_assessment_id", assessmentId)
           .order("module_key", { ascending: true }),
         supabase
           .from("assessment_verdicts")
-          .select("id, site_assessment_id, verdict, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, created_at, updated_at")
+          .select("id, site_assessment_id, verdict, confidence_level, conditions, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, authored_by, methodology_version_id, current_event_id, created_at, updated_at")
           .eq("site_assessment_id", assessmentId)
           .maybeSingle(),
         supabase
@@ -2477,7 +2478,7 @@ export function IntakeWorkspace() {
     }
 
     const validationErrors: string[] = [];
-    const payloads = scoreModules
+    const payloads = scoreComponents
       .map((module) => {
         const draft = scoreDrafts[module.value] ?? { ...blankScoreDraft };
 
@@ -2500,7 +2501,6 @@ export function IntakeWorkspace() {
         }
 
         return {
-          site_assessment_id: selectedAssessment.id,
           module_key: module.value,
           score: parsedScore,
           risk_level: draft.riskLevel,
@@ -2525,11 +2525,12 @@ export function IntakeWorkspace() {
     setScorecardError("");
     setSuccessMessage("");
 
-    const { error: saveError } = await supabase
-      .from("assessment_scores")
-      .upsert(payloads, { onConflict: "site_assessment_id,module_key" });
-
-    if (saveError) {
+    try {
+      await saveAssessmentScores(supabase, {
+        assessmentId: selectedAssessment.id,
+        scores: payloads,
+      });
+    } catch (saveError) {
       setSavingScorecard(false);
       setScorecardError(getErrorMessage(saveError, "Could not save scorecard."));
       return;
@@ -2555,30 +2556,31 @@ export function IntakeWorkspace() {
     setScorecardError("");
     setSuccessMessage("");
 
-    const approvedAt = verdictDraft.approvedByAnalyst
-      ? assessmentVerdict?.approved_at ?? new Date().toISOString()
-      : null;
+    if (!verdictDraft.summary.trim()) {
+      setSavingVerdict(false);
+      setScorecardError("A verdict rationale is required.");
+      return;
+    }
 
-    const { data, error: saveError } = await supabase
-      .from("assessment_verdicts")
-      .upsert(
-        {
-          site_assessment_id: selectedAssessment.id,
-          verdict: verdictDraft.verdict,
-          summary: verdictDraft.summary.trim() || null,
-          key_strengths: verdictDraft.keyStrengths.trim() || null,
-          key_risks: verdictDraft.keyRisks.trim() || null,
-          recommended_next_steps: verdictDraft.recommendedNextSteps.trim() || null,
-          limitations_note: verdictDraft.limitationsNote.trim() || null,
-          approved_by_analyst: verdictDraft.approvedByAnalyst,
-          approved_at: approvedAt,
-        },
-        { onConflict: "site_assessment_id" },
-      )
-      .select("id, site_assessment_id, verdict, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, created_at, updated_at")
-      .single();
+    if (verdictDraft.confidenceLevel === "unknown") {
+      setSavingVerdict(false);
+      setScorecardError("Select high, medium or low verdict confidence.");
+      return;
+    }
 
-    if (saveError) {
+    if (!verdictDraft.conditions.trim()) {
+      setSavingVerdict(false);
+      setScorecardError("Verdict conditions are required; state explicitly when none apply.");
+      return;
+    }
+
+    let data;
+    try {
+      data = await saveAssessmentVerdict(supabase, {
+        assessmentId: selectedAssessment.id,
+        draft: verdictDraft,
+      });
+    } catch (saveError) {
       setSavingVerdict(false);
       setScorecardError(getErrorMessage(saveError, "Could not save final verdict."));
       return;
@@ -6059,7 +6061,7 @@ function ScorecardPanel({
 
       <form onSubmit={onSubmit}>
         <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-          {scoreModules.map((module) => {
+          {scoreComponents.map((module) => {
             const draft = scoreDrafts[module.value] ?? { ...blankScoreDraft };
             const savedScore = scoresByModule.get(module.value);
             const parsedScore = parseScoreInput(draft.score);
@@ -6186,7 +6188,13 @@ function FinalVerdictPanel({
           options={verdictOptions}
           onChange={(value) => onChange({ ...draft, verdict: value as AssessmentVerdictDraft["verdict"] })}
         />
-        <label className="flex items-end lg:col-span-3">
+        <SelectField
+          label="Verdict confidence"
+          value={draft.confidenceLevel}
+          options={evidenceConfidenceLevels}
+          onChange={(value) => onChange({ ...draft, confidenceLevel: value as AssessmentVerdictDraft["confidenceLevel"] })}
+        />
+        <label className="flex items-end lg:col-span-2">
           <span className="inline-flex h-11 w-full items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700">
             <input
               checked={draft.approvedByAnalyst}
@@ -6196,6 +6204,27 @@ function FinalVerdictPanel({
             />
             Analyst approved
           </span>
+        </label>
+        <label className="block lg:col-span-2">
+          <span className="mb-1.5 block text-sm font-semibold text-slate-700">Conditions</span>
+          <textarea
+            value={draft.conditions}
+            onChange={(event) => onChange({ ...draft, conditions: event.target.value })}
+            required
+            rows={3}
+            placeholder="State the conditions, or explicitly record that none apply"
+            className={textareaClass}
+          />
+        </label>
+        <label className="block lg:col-span-2">
+          <span className="mb-1.5 block text-sm font-semibold text-slate-700">Change reason</span>
+          <textarea
+            value={draft.changeReason}
+            onChange={(event) => onChange({ ...draft, changeReason: event.target.value })}
+            rows={3}
+            placeholder="Required when changing verdict, confidence or approval"
+            className={textareaClass}
+          />
         </label>
         <label className="block lg:col-span-4">
           <span className="mb-1.5 block text-sm font-semibold text-slate-700">Executive summary</span>

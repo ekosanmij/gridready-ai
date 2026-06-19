@@ -8,56 +8,77 @@ import {
   riskLevelTone,
 } from "@/lib/evidence";
 
-export const scoreModules = [
+export const scoreComponents = [
   {
     value: "power_feasibility",
     label: "Power feasibility",
+    weight: 0.3,
     guidance: "Grid proximity, utility/TSP context, POI plausibility, and time-to-power signals.",
   },
   {
     value: "interconnection_readiness",
     label: "Interconnection readiness",
+    weight: 0.2,
     guidance: "Process fit, required inputs, entity/control readiness, studies, and utility/TSP communication maturity.",
   },
   {
     value: "reliability_risk",
-    label: "Reliability risk",
+    label: "Grid reliability readiness",
+    weight: 0.15,
     guidance: "Ride-through, protection, UPS/backup/storage behavior, observability, and disturbance response gaps.",
   },
   {
     value: "energy_economics",
-    label: "Energy economics",
+    label: "Energy economics and congestion",
+    weight: 0.1,
     guidance: "Pricing-zone context, congestion exposure, procurement optionality, and commercial uncertainty.",
   },
   {
     value: "flexibility",
     label: "Flexibility potential",
+    weight: 0.1,
     guidance: "Curtailment, workload shifting, staged energization, storage, and demand-response posture.",
   },
   {
     value: "site_non_power_risks",
-    label: "Site/non-power risk",
+    label: "Site, permitting and water risk",
+    weight: 0.1,
     guidance: "Land, zoning, water/cooling, permitting, community, access, and backup-generation permitting risk.",
   },
   {
     value: "evidence_quality",
-    label: "Evidence quality",
+    label: "Evidence confidence",
+    weight: 0.05,
     guidance: "Official-source coverage, source confidence, recency, assumption separation, and evidence gaps.",
   },
+] as const;
+
+export const scoreModules = [
+  ...scoreComponents,
   {
     value: "overall_readiness",
     label: "Overall readiness",
-    guidance: "Manual analyst synthesis of the site as a power-feasibility and interconnection-readiness candidate.",
+    weight: 1,
+    guidance: "Server-derived weighted readiness. This value cannot be entered or overridden directly.",
   },
 ] as const;
 
 export const verdictOptions = [
-  { value: "proceed", label: "Proceed" },
-  { value: "proceed_with_conditions", label: "Proceed with conditions" },
-  { value: "escalate_deeper_diligence", label: "Escalate to deeper diligence" },
-  { value: "pause", label: "Pause" },
   { value: "reject", label: "Reject" },
-  { value: "insufficient_information", label: "Insufficient information" },
+  { value: "pause", label: "Pause" },
+  { value: "proceed_targeted_diligence", label: "Proceed with targeted diligence" },
+  { value: "proceed_with_caution", label: "Proceed with caution" },
+  { value: "strong_candidate", label: "Strong candidate" },
+  { value: "strong_candidate_subject_to_utility_confirmation", label: "Strong candidate subject to utility/TSP confirmation" },
+] as const;
+
+export const readinessBands = [
+  { key: "reject_not_currently_viable", label: "Reject / not currently viable", minimum: 0, maximum: 24 },
+  { key: "high_risk_major_blockers", label: "High risk / major blockers", minimum: 25, maximum: 44 },
+  { key: "targeted_diligence_only", label: "Targeted diligence only", minimum: 45, maximum: 59 },
+  { key: "plausible_unresolved_risks", label: "Plausible with unresolved risks", minimum: 60, maximum: 74 },
+  { key: "strong_candidate", label: "Strong candidate", minimum: 75, maximum: 84 },
+  { key: "highly_attractive_candidate", label: "Highly attractive candidate", minimum: 85, maximum: 100 },
 ] as const;
 
 export const reviewStatuses = [
@@ -86,9 +107,12 @@ export type ReviewType = (typeof reviewTypes)[number]["value"];
 export type DeliveryGateStatus = "blocked" | "pass" | "risk";
 
 export type AssessmentScoreRecord = {
+  calculation_origin?: "automated" | "initial_manual" | "legacy" | "manual_override";
   confidence_level: EvidenceConfidenceLevel;
   created_at: string;
   id: string;
+  is_derived?: boolean;
+  methodology_version_id?: string | null;
   module_key: ScoreModuleKey;
   override_note: string | null;
   rationale: string | null;
@@ -96,11 +120,16 @@ export type AssessmentScoreRecord = {
   score: number;
   site_assessment_id: string;
   updated_at: string;
+  weight?: number | null;
+  weighted_contribution?: number | null;
 };
 
 export type AssessmentVerdictRecord = {
   approved_at: string | null;
   approved_by_analyst: boolean;
+  authored_by?: string | null;
+  conditions?: string | null;
+  confidence_level: EvidenceConfidenceLevel;
   created_at: string;
   id: string;
   key_risks: string | null;
@@ -111,6 +140,21 @@ export type AssessmentVerdictRecord = {
   summary: string | null;
   updated_at: string;
   verdict: VerdictOption;
+};
+
+export type AssessmentScoreCalculationRecord = {
+  blockers: Array<{ key: string; message: string; remediation: string }>;
+  calculated_by: string | null;
+  calculation_reason: string | null;
+  completed_component_count: number;
+  confidence_points: number;
+  created_at: string;
+  id: string;
+  methodology_version_id: string;
+  overall_confidence: "high" | "low" | "medium";
+  overall_score: number | null;
+  readiness_band: string;
+  site_assessment_id: string;
 };
 
 export type ExpertReviewRecord = {
@@ -137,6 +181,9 @@ export type AssessmentScoreDraft = {
 
 export type AssessmentVerdictDraft = {
   approvedByAnalyst: boolean;
+  changeReason: string;
+  conditions: string;
+  confidenceLevel: EvidenceConfidenceLevel;
   keyRisks: string;
   keyStrengths: string;
   limitationsNote: string;
@@ -158,6 +205,8 @@ export type ScorecardSummary = {
   completedModules: number;
   completionPercent: number;
   lowestScore: { label: string; moduleKey: ScoreModuleKey; score: number } | null;
+  overallConfidence: EvidenceConfidenceLevel;
+  readinessBand: string | null;
   totalModules: number;
 };
 
@@ -190,12 +239,15 @@ export const blankScoreDraft: AssessmentScoreDraft = {
 
 export const blankVerdictDraft: AssessmentVerdictDraft = {
   approvedByAnalyst: false,
+  changeReason: "",
+  conditions: "",
+  confidenceLevel: "unknown",
   keyRisks: "",
   keyStrengths: "",
   limitationsNote: "",
   recommendedNextSteps: "",
   summary: "",
-  verdict: "insufficient_information",
+  verdict: "pause",
 };
 
 export const blankExpertReviewDraft: ExpertReviewDraft = {
@@ -254,6 +306,9 @@ export function createVerdictDraft(record?: AssessmentVerdictRecord | null): Ass
   return record
     ? {
         approvedByAnalyst: record.approved_by_analyst,
+        changeReason: "",
+        conditions: record.conditions ?? "",
+        confidenceLevel: record.confidence_level,
         keyRisks: record.key_risks ?? "",
         keyStrengths: record.key_strengths ?? "",
         limitationsNote: record.limitations_note ?? "",
@@ -305,16 +360,22 @@ export function validateScoreDraft(moduleLabel: string, draft: AssessmentScoreDr
 }
 
 export function calculateScorecardSummary(scores: AssessmentScoreRecord[]): ScorecardSummary {
-  const completedModules = new Set(scores.map((score) => score.module_key)).size;
-  const totalModules: number = scoreModules.length;
-  const averageScore =
-    scores.length === 0
-      ? null
-      : Math.round(scores.reduce((sum, score) => sum + score.score, 0) / scores.length);
+  const componentKeys = new Set(scoreComponents.map((module) => module.value));
+  const componentScores = scores.filter((score) => componentKeys.has(score.module_key as typeof scoreComponents[number]["value"]));
+  const completedModules = new Set(componentScores.map((score) => score.module_key)).size;
+  const totalModules: number = scoreComponents.length;
+  const derivedOverall = scores.find((score) => score.module_key === "overall_readiness" && score.is_derived !== false);
+  const calculatedScore = completedModules === totalModules
+    ? Math.round(scoreComponents.reduce((total, module) => {
+        const record = componentScores.find((score) => score.module_key === module.value);
+        return total + (record?.score ?? 0) * module.weight;
+      }, 0))
+    : null;
+  const averageScore = derivedOverall?.score ?? calculatedScore;
   const lowestRecord =
-    scores.length === 0
+    componentScores.length === 0
       ? null
-      : [...scores].sort((first, second) => first.score - second.score)[0];
+      : [...componentScores].sort((first, second) => first.score - second.score)[0];
 
   return {
     averageScore,
@@ -327,8 +388,30 @@ export function calculateScorecardSummary(scores: AssessmentScoreRecord[]): Scor
           score: lowestRecord.score,
         }
       : null,
+    overallConfidence: derivedOverall?.confidence_level ?? calculateComponentConfidence(componentScores, completedModules),
+    readinessBand: averageScore === null ? null : readinessBandForScore(averageScore).key,
     totalModules,
   };
+}
+
+export function readinessBandForScore(score: number) {
+  const boundedScore = Math.min(100, Math.max(0, Math.round(score)));
+  return readinessBands.find((band) => boundedScore >= band.minimum && boundedScore <= band.maximum) ?? readinessBands[0];
+}
+
+export function readinessBandLabel(value: string | null | undefined) {
+  if (!value || value === "incomplete") {
+    return "Incomplete";
+  }
+  return readinessBands.find((band) => band.key === value)?.label ?? value.replaceAll("_", " ");
+}
+
+function calculateComponentConfidence(scores: AssessmentScoreRecord[], completedModules: number): EvidenceConfidenceLevel {
+  if (completedModules < scoreComponents.length || scores.some((score) => score.confidence_level === "unknown")) {
+    return "low";
+  }
+  const points = scores.reduce((total, score) => total + ({ high: 100, medium: 70, low: 40, unknown: 0 }[score.confidence_level] ?? 0), 0) / scoreComponents.length;
+  return points >= 80 ? "high" : points >= 55 ? "medium" : "low";
 }
 
 export function countCriticalFindings(findings: AssessmentFindingRecord[]) {

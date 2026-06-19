@@ -32,6 +32,7 @@ import { type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { AssignmentControls } from "@/components/assessment-workspace/assignment-controls";
 import { EvidenceEditor } from "@/components/assessment-workspace/evidence-editor";
 import { ReportAuthor } from "@/components/assessment-workspace/report-author";
+import { ScorecardEditor } from "@/components/assessment-workspace/scorecard-editor";
 import { SiteGridWorkspace } from "@/components/assessment-workspace/site-grid-workspace";
 import { SmartAssistant } from "@/components/assessment-workspace/smart-assistant";
 import {
@@ -74,6 +75,7 @@ import {
   reportExportStatusLabel,
 } from "@/lib/report-builder";
 import {
+  AssessmentScoreCalculationRecord,
   AssessmentScoreRecord,
   AssessmentVerdictRecord,
   ExpertReviewRecord,
@@ -84,9 +86,6 @@ import {
   deliveryGatesAreComplete,
   deliveryGateTone,
   reviewStatusLabel,
-  scoreModuleLabel,
-  scoreTone,
-  verdictLabel,
 } from "@/lib/scorecard";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 
@@ -171,6 +170,7 @@ export function AssessmentWorkspace({
           { data: sourceData, error: sourceError },
           { data: findingData, error: findingError },
           { data: scoreData, error: scoreError },
+          { data: scoreCalculationData, error: scoreCalculationError },
           { data: verdictData, error: verdictError },
           { data: reviewData, error: reviewError },
           { data: sectionData, error: sectionError },
@@ -206,12 +206,19 @@ export function AssessmentWorkspace({
             .order("created_at", { ascending: false }),
           supabase
             .from("assessment_scores")
-            .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, created_at, updated_at")
+            .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, calculation_origin, is_derived, methodology_version_id, weight, weighted_contribution, created_at, updated_at")
             .eq("site_assessment_id", assessmentId)
             .order("module_key", { ascending: true }),
           supabase
+            .from("assessment_score_calculations")
+            .select("id, site_assessment_id, methodology_version_id, completed_component_count, overall_score, readiness_band, confidence_points, overall_confidence, blockers, calculated_by, calculation_reason, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
             .from("assessment_verdicts")
-            .select("id, site_assessment_id, verdict, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, created_at, updated_at")
+            .select("id, site_assessment_id, verdict, confidence_level, conditions, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, authored_by, methodology_version_id, current_event_id, created_at, updated_at")
             .eq("site_assessment_id", assessmentId)
             .maybeSingle(),
           supabase
@@ -263,6 +270,7 @@ export function AssessmentWorkspace({
           sourceError ||
           findingError ||
           scoreError ||
+          scoreCalculationError ||
           verdictError ||
           reviewError ||
           sectionError ||
@@ -278,6 +286,7 @@ export function AssessmentWorkspace({
             sourceError ??
             findingError ??
             scoreError ??
+            scoreCalculationError ??
             verdictError ??
             reviewError ??
             sectionError ??
@@ -323,6 +332,7 @@ export function AssessmentWorkspace({
           notes: (noteData ?? []) as NoteRecord[],
           reportExport: (((exportData ?? []) as AssessmentReportExportRecord[])[0] as AssessmentReportExportRecord | undefined) ?? null,
           reportSections: (sectionData ?? []) as AssessmentReportSectionRecord[],
+          scoreCalculation: (scoreCalculationData as AssessmentScoreCalculationRecord | null) ?? null,
           scores: (scoreData ?? []) as AssessmentScoreRecord[],
           statusHistory: (statusHistoryData ?? []) as StatusHistoryRecord[],
           verdict: (verdictData as AssessmentVerdictRecord | null) ?? null,
@@ -499,7 +509,7 @@ function ModuleContent({
     case "report":
       return <ReportModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "scorecard":
-      return <ScorecardModule data={data} role={role} />;
+      return <ScorecardModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "site-grid":
       return <SiteGridModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "overview":
@@ -810,7 +820,7 @@ function FindingsModule({ data }: { data: AssessmentWorkspaceData }) {
   );
 }
 
-function ScorecardModule({ data, role }: { data: AssessmentWorkspaceData; role: WorkspaceRole }) {
+function ScorecardModule({ data, role, onRefresh }: { data: AssessmentWorkspaceData; role: AppRole; onRefresh: () => void }) {
   const triggerSummary = detectExpertReviewTriggers({
     assessment: data.assessment,
     findings: data.findings,
@@ -821,35 +831,20 @@ function ScorecardModule({ data, role }: { data: AssessmentWorkspaceData; role: 
 
   return (
     <div className="space-y-5">
-      <WorkItemPanel title="Scorecard" eyebrow={`${data.scoreSummary.completedModules}/${data.scoreSummary.totalModules} modules`} tone={data.scoreSummary.completedModules === data.scoreSummary.totalModules ? "success" : "warning"}>
-        <div className="grid gap-3 md:grid-cols-2">
-          {data.scores.length === 0 ? (
-            <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)] md:col-span-2">
-              No score modules completed yet.
-            </p>
-          ) : (
-            data.scores.map((score) => (
-              <div key={score.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={cx("rounded-md border px-2 py-1 text-xs font-semibold", scoreTone(score.score))}>{score.score}</span>
-                  <StatusPill tone={score.confidence_level === "high" ? "success" : "info"}>{score.confidence_level}</StatusPill>
-                </div>
-                <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{scoreModuleLabel(score.module_key)}</p>
-                {role === "analyst" && score.rationale ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{score.rationale}</p> : null}
-              </div>
-            ))
-          )}
-        </div>
+      <WorkItemPanel title="Weighted scorecard and verdict" eyebrow={`${data.scoreSummary.completedModules}/${data.scoreSummary.totalModules} components`} tone={data.scoreSummary.completedModules === data.scoreSummary.totalModules ? "success" : "warning"}>
+        <ScorecardEditor
+          key={`${data.scoreCalculation?.id ?? "none"}-${data.verdict?.updated_at ?? "none"}`}
+          assessmentId={data.assessment.id}
+          calculation={data.scoreCalculation}
+          onChanged={onRefresh}
+          role={role}
+          scores={data.scores}
+          verdict={data.verdict}
+        />
       </WorkItemPanel>
 
-      <WorkItemPanel title="Verdict and expert review" eyebrow={data.verdict ? verdictLabel(data.verdict.verdict) : "No verdict"} tone={data.verdict?.approved_by_analyst ? "success" : "warning"}>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <TextBlock label="Verdict summary" value={data.verdict?.summary ?? null} />
-          <TextBlock label="Recommended next steps" value={data.verdict?.recommended_next_steps ?? null} />
-          <TextBlock label="Key strengths" value={data.verdict?.key_strengths ?? null} />
-          <TextBlock label="Key risks" value={data.verdict?.key_risks ?? null} />
-        </div>
-        <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
+      <WorkItemPanel title="Expert review" eyebrow={data.expertReview ? reviewStatusLabel(data.expertReview.status) : "Not started"} tone={triggerSummary.required ? "warning" : "success"}>
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
           <StatusPill tone={triggerSummary.required ? "warning" : "success"}>
             {triggerSummary.required ? "Expert review required" : "No expert review trigger"}
           </StatusPill>
