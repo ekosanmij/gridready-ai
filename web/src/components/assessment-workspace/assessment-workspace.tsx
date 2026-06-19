@@ -32,6 +32,7 @@ import { type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { AssignmentControls } from "@/components/assessment-workspace/assignment-controls";
 import { EvidenceEditor } from "@/components/assessment-workspace/evidence-editor";
 import { ReportAuthor } from "@/components/assessment-workspace/report-author";
+import { SiteGridWorkspace } from "@/components/assessment-workspace/site-grid-workspace";
 import { SmartAssistant } from "@/components/assessment-workspace/smart-assistant";
 import {
   ActivityItem,
@@ -64,7 +65,7 @@ import {
   findingStatusLabel,
   riskLevelLabel,
 } from "@/lib/evidence";
-import { GridAssetRecord, formatDistanceMiles, gridAssetTypeLabel } from "@/lib/gis";
+import { GridAssetRecord } from "@/lib/gis";
 import { AssessmentStatus, assessmentStatuses, statusLabel } from "@/lib/intake";
 import { allowedAssessmentTransitions, transitionAssessmentStatus } from "@/lib/assessment-workflow";
 import {
@@ -500,7 +501,7 @@ function ModuleContent({
     case "scorecard":
       return <ScorecardModule data={data} role={role} />;
     case "site-grid":
-      return <SiteGridModule data={data} />;
+      return <SiteGridModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "overview":
     default:
       return <OverviewModule data={data} role={role} smartSignals={smartSignals} />;
@@ -754,45 +755,17 @@ function IntakeModule({ data, role }: { data: AssessmentWorkspaceData; role: Wor
   );
 }
 
-function SiteGridModule({ data }: { data: AssessmentWorkspaceData }) {
+function SiteGridModule({ data, onRefresh, role }: { data: AssessmentWorkspaceData; onRefresh: () => void; role: AppRole }) {
   const site = getSite(data.assessment);
 
   return (
-    <div className="space-y-5">
-      <WorkItemPanel title="Site and grid context" eyebrow="Site & Grid" tone="info">
-        <div className="grid gap-3 md:grid-cols-2">
-          <Fact label="Address" value={[site?.address, site?.city, site?.county, site?.state].filter(Boolean).join(", ") || "Not set"} />
-          <Fact label="Coordinates" value={site?.latitude && site?.longitude ? `${site.latitude}, ${site.longitude}` : "Not set"} />
-          <Fact label="Market" value={data.assessment.market_region || "Not set"} />
-          <Fact label="Known utility" value={data.assessment.known_utility ?? "Not set"} />
-          <Fact label="Known TSP" value={data.assessment.known_tsp ?? "Not set"} />
-          <Fact label="Substation / POI" value={data.assessment.known_substation_or_poi ?? "Not set"} />
-        </div>
-      </WorkItemPanel>
-
-      <WorkItemPanel title="Grid assets" eyebrow={`${data.gridAssets.length} assets`} tone={data.gridAssets.length > 0 ? "success" : "neutral"}>
-        {data.gridAssets.length === 0 ? (
-          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
-            No grid assets captured yet.
-          </p>
-        ) : (
-          <div className="grid gap-3">
-            {data.gridAssets.map((asset) => (
-              <div key={asset.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusPill tone={asset.is_candidate_poi ? "brand" : "neutral"}>{asset.is_candidate_poi ? "Candidate POI" : gridAssetTypeLabel(asset.asset_type)}</StatusPill>
-                  <StatusPill tone={asset.confidence_level === "high" ? "success" : asset.confidence_level === "medium" ? "info" : "warning"}>{asset.confidence_level}</StatusPill>
-                </div>
-                <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{asset.asset_name}</p>
-                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                  {formatDistanceMiles(asset.distance_miles)} · {asset.owner_operator ?? "Owner unknown"} · {asset.voltage_kv ? `${asset.voltage_kv} kV` : "Voltage unknown"}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </WorkItemPanel>
-    </div>
+    <SiteGridWorkspace
+      assessment={data.assessment}
+      assets={data.gridAssets}
+      onChanged={onRefresh}
+      role={role}
+      site={site}
+    />
   );
 }
 

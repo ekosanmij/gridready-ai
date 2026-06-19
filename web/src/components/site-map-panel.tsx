@@ -21,12 +21,15 @@ import {
   GridAssetDraft,
   GridAssetRecord,
   GridAssetType,
+  SiteGeospatialContext,
   calculateDistanceMiles,
   confidenceLevelLabel,
   confidenceLevels,
+  createGeospatialContextFeatureCollection,
   createRadiusFeatureCollection,
   externalMapUrl,
   formatDistanceMiles,
+  geospatialCoverageLabel,
   getMapStyle,
   gridAssetTypeLabel,
   gridAssetTypes,
@@ -48,7 +51,11 @@ type SiteMapPanelProps = {
   assessmentId: string;
   assetDraft: GridAssetDraft;
   assets: GridAssetRecord[];
+  contextError?: string;
+  contextLoading?: boolean;
+  editable?: boolean;
   error: string;
+  geospatialContext?: SiteGeospatialContext | null;
   knownSubstationOrPoi: string | null;
   knownTsp: string | null;
   knownUtility: string | null;
@@ -74,9 +81,11 @@ type MapLifecycleStatus = "error" | "idle" | "loading" | "ready";
 
 type MapLayerVisibility = {
   candidatePois: boolean;
+  marketZone: boolean;
   radiusRings: boolean;
   savedAssets: boolean;
   siteMarker: boolean;
+  utilityTerritory: boolean;
 };
 
 type MaplibreMap = import("maplibre-gl").Map;
@@ -91,6 +100,43 @@ function ContextLine({ label, value }: { label: string; value: string | null | u
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2">
       <p className="text-xs font-semibold uppercase text-[var(--color-text-secondary)]">{label}</p>
       <p className="mt-1 break-words text-sm font-medium text-[var(--color-text-primary)]">{value || "Not set"}</p>
+    </div>
+  );
+}
+
+function DatasetSourceCard({
+  label,
+  limitations,
+  name,
+  sourceUrl,
+  version,
+}: {
+  label: string;
+  limitations: string | null | undefined;
+  name: string | null | undefined;
+  sourceUrl: string | null | undefined;
+  version: string | null | undefined;
+}) {
+  if (!name) {
+    return (
+      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+        <p className="text-xs font-semibold uppercase text-[var(--color-text-secondary)]">{label}</p>
+        <p className="mt-1 text-sm text-[var(--color-text-secondary)]">No active governed dataset matched this site.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3">
+      <p className="text-xs font-semibold uppercase text-[var(--color-text-secondary)]">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-[var(--color-text-primary)]">{name}</p>
+      <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Version {version ?? "unversioned"}</p>
+      {limitations ? <p className="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">{limitations}</p> : null}
+      {sourceUrl ? (
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[var(--color-brand-primary)] hover:underline">
+          <ExternalLink size={13} /> Source
+        </a>
+      ) : null}
     </div>
   );
 }
@@ -163,7 +209,11 @@ export function SiteMapPanel({
   assessmentId,
   assetDraft,
   assets,
+  contextError = "",
+  contextLoading = false,
+  editable = true,
   error,
+  geospatialContext = null,
   knownSubstationOrPoi,
   knownTsp,
   knownUtility,
@@ -182,15 +232,21 @@ export function SiteMapPanel({
     site: null,
   });
   const mapStyle = useMemo(() => getMapStyle(), []);
+  const geospatialFeatures = useMemo(
+    () => createGeospatialContextFeatureCollection(geospatialContext),
+    [geospatialContext],
+  );
   const [mapError, setMapError] = useState("");
   const [mapStatus, setMapStatus] = useState<MapLifecycleStatus>("idle");
   const [retryCount, setRetryCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [layerVisibility, setLayerVisibility] = useState<MapLayerVisibility>({
     candidatePois: true,
+    marketZone: true,
     radiusRings: true,
     savedAssets: true,
     siteMarker: true,
+    utilityTerritory: true,
   });
 
   const siteHasCoordinates = hasValidCoordinatePair(site?.latitude, site?.longitude);
@@ -298,6 +354,41 @@ export function SiteMapPanel({
             });
           }
 
+          if (geospatialFeatures.features.length > 0 && !map.getSource("governed-geospatial-context")) {
+            map.addSource("governed-geospatial-context", {
+              type: "geojson",
+              data: geospatialFeatures,
+            });
+          }
+
+          if (map.getSource("governed-geospatial-context") && !map.getLayer("utility-territory-fill")) {
+            map.addLayer({
+              id: "utility-territory-fill",
+              type: "fill",
+              source: "governed-geospatial-context",
+              filter: ["==", ["get", "kind"], "utility_territory"],
+              paint: {
+                "fill-color": "#2563eb",
+                "fill-opacity": 0.12,
+                "fill-outline-color": "#1d4ed8",
+              },
+            });
+          }
+
+          if (map.getSource("governed-geospatial-context") && !map.getLayer("market-zone-fill")) {
+            map.addLayer({
+              id: "market-zone-fill",
+              type: "fill",
+              source: "governed-geospatial-context",
+              filter: ["==", ["get", "kind"], "market_zone"],
+              paint: {
+                "fill-color": "#f59e0b",
+                "fill-opacity": 0.1,
+                "fill-outline-color": "#d97706",
+              },
+            });
+          }
+
           const siteMarker = new maplibre.default.Marker({ element: createMarkerElement("site") })
             .setLngLat([longitude, latitude])
             .setPopup(new maplibre.default.Popup({ closeButton: false }).setText(`${siteName} marker`))
@@ -359,6 +450,7 @@ export function SiteMapPanel({
     };
   }, [
     mapStyle,
+    geospatialFeatures,
     onAssetFocus,
     retryCount,
     site?.latitude,
@@ -373,6 +465,14 @@ export function SiteMapPanel({
 
     if (map?.getLayer("radius-rings-line")) {
       map.setLayoutProperty("radius-rings-line", "visibility", layerVisibility.radiusRings ? "visible" : "none");
+    }
+
+    if (map?.getLayer("utility-territory-fill")) {
+      map.setLayoutProperty("utility-territory-fill", "visibility", layerVisibility.utilityTerritory ? "visible" : "none");
+    }
+
+    if (map?.getLayer("market-zone-fill")) {
+      map.setLayoutProperty("market-zone-fill", "visibility", layerVisibility.marketZone ? "visible" : "none");
     }
 
     if (markerRefs.current.site) {
@@ -494,6 +594,8 @@ export function SiteMapPanel({
                 <div className="grid gap-2">
                   <LayerToggle checked={layerVisibility.siteMarker} label="Site marker" onChange={() => toggleLayer("siteMarker")} />
                   <LayerToggle checked={layerVisibility.radiusRings} label="Radius rings" onChange={() => toggleLayer("radiusRings")} />
+                  <LayerToggle checked={layerVisibility.utilityTerritory} label="Utility territory" onChange={() => toggleLayer("utilityTerritory")} />
+                  <LayerToggle checked={layerVisibility.marketZone} label="Market / pricing zone" onChange={() => toggleLayer("marketZone")} />
                   <LayerToggle checked={layerVisibility.savedAssets} label="Saved assets" onChange={() => toggleLayer("savedAssets")} />
                   <LayerToggle checked={layerVisibility.candidatePois} label="Candidate POIs" onChange={() => toggleLayer("candidatePois")} />
                 </div>
@@ -502,6 +604,8 @@ export function SiteMapPanel({
                 <LegendItem colorClass="bg-[var(--color-map-site)]" label="Site" />
                 <LegendItem colorClass="bg-[var(--color-map-asset)]" label="Asset" />
                 <LegendItem colorClass="bg-[var(--color-map-candidate)]" label="Candidate POI" />
+                {geospatialContext?.territory_geojson ? <LegendItem colorClass="bg-blue-600" label="Utility territory" /> : null}
+                {geospatialContext?.zone_geojson ? <LegendItem colorClass="bg-amber-500" label="Market zone" /> : null}
                 <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-0.5">{visibleAssetCount} visible</span>
               </div>
             </div>
@@ -528,6 +632,12 @@ export function SiteMapPanel({
           <ContextLine label="Utility" value={knownUtility} />
           <ContextLine label="TSP" value={knownTsp} />
           <ContextLine label="Known POI" value={knownSubstationOrPoi} />
+          <ContextLine label="Resolved utility" value={geospatialContext?.utility_name} />
+          <ContextLine label="Pricing / load zone" value={geospatialContext?.pricing_zone} />
+          <ContextLine
+            label="Dataset coverage"
+            value={contextLoading ? "Resolving…" : geospatialContext ? geospatialCoverageLabel(geospatialContext.coverage_status) : "Unavailable"}
+          />
           <ContextLine label="Parcel" value={site?.parcelId} />
           <ContextLine
             label="Coordinates"
@@ -536,7 +646,33 @@ export function SiteMapPanel({
         </div>
       </div>
 
-      <div className="border-t border-[var(--color-border)] p-4">
+      {contextError ? (
+        <div className="mx-4 mb-4 flex items-start gap-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-sm text-[var(--color-warning)]">
+          <AlertCircle className="mt-0.5 shrink-0" size={16} />
+          {contextError}
+        </div>
+      ) : null}
+
+      {geospatialContext?.territory_dataset_name || geospatialContext?.zone_dataset_name ? (
+        <div className="mx-4 mb-4 grid gap-3 lg:grid-cols-2">
+          <DatasetSourceCard
+            label="Utility territory source"
+            name={geospatialContext.territory_dataset_name}
+            version={geospatialContext.territory_dataset_version}
+            sourceUrl={geospatialContext.territory_source_url}
+            limitations={geospatialContext.territory_limitations}
+          />
+          <DatasetSourceCard
+            label="Market-zone source"
+            name={geospatialContext.zone_dataset_name}
+            version={geospatialContext.zone_dataset_version}
+            sourceUrl={geospatialContext.zone_source_url}
+            limitations={geospatialContext.zone_limitations}
+          />
+        </div>
+      ) : null}
+
+      {editable ? <div className="border-t border-[var(--color-border)] p-4">
         {error ? (
           <div className="mb-4 flex items-start gap-3 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-warning)]">
             <AlertCircle className="mt-0.5 shrink-0" size={18} />
@@ -636,6 +772,7 @@ export function SiteMapPanel({
               value={assetDraft.source}
               onChange={(event) => onAssetDraftChange({ ...assetDraft, source: event.target.value })}
               className={inputClass}
+              required
             />
           </label>
           <label className="block lg:col-span-2">
@@ -675,7 +812,11 @@ export function SiteMapPanel({
             </button>
           </div>
         </form>
-      </div>
+      </div> : (
+        <div className="border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+          Grid asset editing is available to authorised analysts and administrators.
+        </div>
+      )}
 
       <div className="border-t border-[var(--color-border)]">
         <div className="flex items-center gap-2 px-4 py-3">
