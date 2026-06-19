@@ -30,6 +30,10 @@ type OrganisationMembershipRecord = {
   organisations?: Array<{ name?: string | null }> | { name?: string | null } | null;
 };
 
+type ContactIdRecord = {
+  id?: string | null;
+};
+
 export function normaliseAccountContext(record: AccountContextRecord | null | undefined): AccountContext | null {
   if (!record?.user_id) {
     return null;
@@ -80,6 +84,59 @@ export async function ensureCustomerOrganisation(
     organisationId: record.organisation_id,
     organisationName: record.organisation_name ?? input.organisationName,
   };
+}
+
+export async function ensureCustomerContact(
+  client: SupabaseClient,
+  input: {
+    email: string;
+    name: string;
+    organisationId: string;
+    phone: string;
+    roleTitle: string;
+  },
+) {
+  const email = input.email.trim().toLowerCase();
+  const { data: existingContact, error: lookupError } = await client
+    .from("contacts")
+    .select("id")
+    .eq("organisation_id", input.organisationId)
+    .ilike("email", email)
+    .limit(1)
+    .maybeSingle();
+
+  if (lookupError) {
+    throw lookupError;
+  }
+
+  const existingId = (existingContact as ContactIdRecord | null)?.id;
+  if (existingId) {
+    return { created: false, id: existingId };
+  }
+
+  const { data: contact, error: createError } = await client
+    .from("contacts")
+    .insert({
+      email,
+      is_primary: true,
+      name: input.name.trim() || email,
+      organisation_id: input.organisationId,
+      phone: input.phone.trim() || null,
+      role_title: input.roleTitle.trim() || null,
+    })
+    .select("id")
+    .single();
+
+  if (createError) {
+    throw createError;
+  }
+
+  const contactId = (contact as ContactIdRecord | null)?.id;
+  if (!contactId) {
+    throw new Error("The requester contact could not be created.");
+  }
+
+  return { created: true, id: contactId };
 }
 
 export async function loadOrganisationChoices(client: SupabaseClient, userId: string) {

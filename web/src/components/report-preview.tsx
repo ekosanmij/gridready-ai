@@ -486,12 +486,12 @@ async function fetchReportPreviewState(assessmentId: string): Promise<PreviewSta
       .maybeSingle(),
     supabase
       .from("assessment_findings")
-      .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, created_at, updated_at")
+      .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, support_status, created_at, updated_at")
       .eq("site_assessment_id", assessment.id)
       .order("created_at", { ascending: false }),
     supabase
       .from("evidence_sources")
-      .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, summary, created_at, updated_at")
+      .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, notes, authored_by, metadata_version, summary, created_at, updated_at")
       .eq("site_assessment_id", assessment.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -530,7 +530,7 @@ async function fetchReportPreviewState(assessmentId: string): Promise<PreviewSta
   if (findingIds.length > 0) {
     const { data: linkData, error: linkError } = await supabase
       .from("finding_evidence_links")
-      .select("id, finding_id, evidence_source_id, link_note, created_at")
+      .select("id, finding_id, evidence_source_id, relationship, link_note, linked_by, created_at")
       .in("finding_id", findingIds);
 
     if (linkError) {

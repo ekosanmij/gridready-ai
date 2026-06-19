@@ -30,7 +30,9 @@ import {
 } from "@/components/ui-primitives";
 import { type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { AssignmentControls } from "@/components/assessment-workspace/assignment-controls";
+import { EvidenceGapEditor } from "@/components/assessment-workspace/evidence-gap-editor";
 import { EvidenceEditor } from "@/components/assessment-workspace/evidence-editor";
+import { FindingEditor } from "@/components/assessment-workspace/finding-editor";
 import { ReportAuthor } from "@/components/assessment-workspace/report-author";
 import { ScorecardEditor } from "@/components/assessment-workspace/scorecard-editor";
 import { SiteGridWorkspace } from "@/components/assessment-workspace/site-grid-workspace";
@@ -60,18 +62,20 @@ import {
 } from "@/lib/assessment-workspace";
 import {
   AssessmentFindingRecord,
+  EvidenceGapRecord,
   EvidenceSourceRecord,
   FindingEvidenceLinkRecord,
-  findingModuleLabel,
-  findingStatusLabel,
-  riskLevelLabel,
 } from "@/lib/evidence";
 import { GridAssetRecord } from "@/lib/gis";
 import { AssessmentStatus, assessmentStatuses, statusLabel } from "@/lib/intake";
 import { allowedAssessmentTransitions, transitionAssessmentStatus } from "@/lib/assessment-workflow";
 import {
   AssessmentReportExportRecord,
+  AssessmentPreflightRunRecord,
   AssessmentReportSectionRecord,
+  ReportClaimEvidenceLinkRecord,
+  ReportClaimRecord,
+  ReportSectionFindingLinkRecord,
   reportExportStatusLabel,
 } from "@/lib/report-builder";
 import {
@@ -169,12 +173,15 @@ export function AssessmentWorkspace({
           { data: gridAssetData, error: gridError },
           { data: sourceData, error: sourceError },
           { data: findingData, error: findingError },
+          { data: gapData, error: gapError },
           { data: scoreData, error: scoreError },
           { data: scoreCalculationData, error: scoreCalculationError },
           { data: verdictData, error: verdictError },
           { data: reviewData, error: reviewError },
           { data: sectionData, error: sectionError },
           { data: exportData, error: exportError },
+          { data: claimData, error: claimError },
+          { data: preflightData, error: preflightError },
           { data: statusHistoryData, error: statusHistoryError },
           { data: assessmentEventData, error: assessmentEventError },
           { data: duplicateCandidateData, error: duplicateError },
@@ -196,12 +203,17 @@ export function AssessmentWorkspace({
             .order("distance_miles", { ascending: true }),
           supabase
             .from("evidence_sources")
-            .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, summary, created_at, updated_at")
+            .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, notes, authored_by, metadata_version, summary, created_at, updated_at")
             .eq("site_assessment_id", assessmentId)
             .order("created_at", { ascending: false }),
           supabase
             .from("assessment_findings")
-            .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, created_at, updated_at")
+            .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, support_status, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("evidence_gaps")
+            .select("id, site_assessment_id, category, title, description, impact, severity, owner_id, due_at, status, blocks_confidence, blocks_review, blocks_delivery, resolution_type, resolution_note, resolved_source_id, approved_exception_id, created_at, updated_at")
             .eq("site_assessment_id", assessmentId)
             .order("created_at", { ascending: false }),
           supabase
@@ -240,6 +252,18 @@ export function AssessmentWorkspace({
             .order("updated_at", { ascending: false })
             .limit(1),
           supabase
+            .from("report_claims")
+            .select("id, report_section_id, site_assessment_id, claim_text, is_material, support_status, confidence_level, rationale, authored_by, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("assessment_preflight_runs")
+            .select("id, site_assessment_id, purpose, status, blockers, warnings, bypassed_blockers, run_by, created_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
             .from("status_history")
             .select("id, from_status, to_status, reason, created_at")
             .eq("site_assessment_id", assessmentId)
@@ -269,12 +293,15 @@ export function AssessmentWorkspace({
           gridError ||
           sourceError ||
           findingError ||
+          gapError ||
           scoreError ||
           scoreCalculationError ||
           verdictError ||
           reviewError ||
           sectionError ||
           exportError ||
+          claimError ||
+          preflightError ||
           statusHistoryError ||
           assessmentEventError ||
           duplicateError
@@ -285,12 +312,15 @@ export function AssessmentWorkspace({
             gridError ??
             sourceError ??
             findingError ??
+            gapError ??
             scoreError ??
             scoreCalculationError ??
             verdictError ??
             reviewError ??
             sectionError ??
             exportError ??
+            claimError ??
+            preflightError ??
             statusHistoryError ??
             assessmentEventError ??
             duplicateError
@@ -298,12 +328,15 @@ export function AssessmentWorkspace({
         }
 
         const findings = (findingData ?? []) as AssessmentFindingRecord[];
+        const claims = (claimData ?? []) as ReportClaimRecord[];
         let links: FindingEvidenceLinkRecord[] = [];
+        let claimLinks: ReportClaimEvidenceLinkRecord[] = [];
+        let sectionFindingLinks: ReportSectionFindingLinkRecord[] = [];
 
         if (findings.length > 0) {
           const { data: linkData, error: linkError } = await supabase
             .from("finding_evidence_links")
-            .select("id, finding_id, evidence_source_id, link_note, created_at")
+            .select("id, finding_id, evidence_source_id, relationship, link_note, linked_by, created_at")
             .in("finding_id", findings.map((finding) => finding.id))
             .order("created_at", { ascending: false });
 
@@ -312,6 +345,27 @@ export function AssessmentWorkspace({
           }
 
           links = (linkData ?? []) as FindingEvidenceLinkRecord[];
+        }
+
+        if (claims.length > 0) {
+          const { data: claimLinkData, error: claimLinkError } = await supabase
+            .from("report_claim_evidence_links")
+            .select("id, report_claim_id, evidence_source_id, relationship, citation_locator, link_note, evidence_snapshot, linked_by, created_at")
+            .in("report_claim_id", claims.map((claim) => claim.id))
+            .order("created_at", { ascending: false });
+          if (claimLinkError) throw claimLinkError;
+          claimLinks = (claimLinkData ?? []) as ReportClaimEvidenceLinkRecord[];
+        }
+
+        const reportSectionIds = ((sectionData ?? []) as AssessmentReportSectionRecord[]).map((section) => section.id);
+        if (reportSectionIds.length > 0) {
+          const { data: sectionFindingLinkData, error: sectionFindingLinkError } = await supabase
+            .from("report_section_finding_links")
+            .select("id, report_section_id, finding_id, relationship, linked_by, created_at")
+            .in("report_section_id", reportSectionIds)
+            .order("created_at", { ascending: false });
+          if (sectionFindingLinkError) throw sectionFindingLinkError;
+          sectionFindingLinks = (sectionFindingLinkData ?? []) as ReportSectionFindingLinkRecord[];
         }
 
         if (cancelled) {
@@ -324,6 +378,7 @@ export function AssessmentWorkspace({
           assessmentEvents: (assessmentEventData ?? []) as AssessmentEventRecord[],
           duplicateSignals: buildDuplicateSignals(assessmentWithContact, (duplicateCandidateData ?? []) as AssessmentDetailRecord[]),
           evidenceLinks: links,
+          evidenceGaps: (gapData ?? []) as EvidenceGapRecord[],
           evidenceSources: (sourceData ?? []) as EvidenceSourceRecord[],
           expertReview: (reviewData as ExpertReviewRecord | null) ?? null,
           files: (fileData ?? []) as FileRecord[],
@@ -331,6 +386,10 @@ export function AssessmentWorkspace({
           gridAssets: (gridAssetData ?? []) as GridAssetRecord[],
           notes: (noteData ?? []) as NoteRecord[],
           reportExport: (((exportData ?? []) as AssessmentReportExportRecord[])[0] as AssessmentReportExportRecord | undefined) ?? null,
+          reportClaimEvidenceLinks: claimLinks,
+          reportClaims: claims,
+          reportSectionFindingLinks: sectionFindingLinks,
+          latestPreflight: (preflightData as AssessmentPreflightRunRecord | null) ?? null,
           reportSections: (sectionData ?? []) as AssessmentReportSectionRecord[],
           scoreCalculation: (scoreCalculationData as AssessmentScoreCalculationRecord | null) ?? null,
           scores: (scoreData ?? []) as AssessmentScoreRecord[],
@@ -503,7 +562,7 @@ function ModuleContent({
     case "evidence":
       return <EvidenceModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "findings":
-      return <FindingsModule data={data} />;
+      return <FindingsModule data={data} role={appRole} onRefresh={onRefresh} />;
     case "intake":
       return <IntakeModule data={data} role={role} />;
     case "report":
@@ -788,34 +847,17 @@ function EvidenceModule({ data, role, onRefresh }: { data: AssessmentWorkspaceDa
         <Fact label="Low-confidence sources" value={String(data.evidenceReadiness.lowConfidenceSources)} />
       </div>
       <EvidenceEditor assessmentId={data.assessment.id} role={role} sources={data.evidenceSources} onChanged={onRefresh} />
+      <div className="mt-5 border-t border-[var(--color-border)] pt-5">
+        <EvidenceGapEditor assessmentId={data.assessment.id} gaps={data.evidenceGaps} role={role} sources={data.evidenceSources} onChanged={onRefresh} />
+      </div>
     </WorkItemPanel>
   );
 }
 
-function FindingsModule({ data }: { data: AssessmentWorkspaceData }) {
+function FindingsModule({ data, role, onRefresh }: { data: AssessmentWorkspaceData; role: AppRole; onRefresh: () => void }) {
   return (
     <WorkItemPanel title="Findings" eyebrow={`${data.findings.length} findings`} tone={data.findings.some((finding) => finding.risk_level === "critical" || finding.risk_level === "high") ? "danger" : "info"}>
-      <div className="grid gap-3">
-        {data.findings.length === 0 ? (
-          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
-            No findings captured yet.
-          </p>
-        ) : (
-          data.findings.map((finding) => (
-            <div key={finding.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill tone={finding.risk_level === "critical" || finding.risk_level === "high" ? "danger" : finding.risk_level === "medium" ? "warning" : "neutral"}>
-                  {riskLevelLabel(finding.risk_level)}
-                </StatusPill>
-                <StatusPill tone="info">{findingModuleLabel(finding.module_key)}</StatusPill>
-                <StatusPill tone={finding.status === "resolved" ? "success" : finding.status === "needs_review" ? "warning" : "neutral"}>{findingStatusLabel(finding.status)}</StatusPill>
-              </div>
-              <p className="mt-2 font-semibold text-[var(--color-text-primary)]">{finding.title}</p>
-              {finding.statement ? <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{finding.statement}</p> : null}
-            </div>
-          ))
-        )}
-      </div>
+      <FindingEditor assessmentId={data.assessment.id} findings={data.findings} links={data.evidenceLinks} onChanged={onRefresh} role={role} sources={data.evidenceSources} />
     </WorkItemPanel>
   );
 }
@@ -864,7 +906,7 @@ function ReportModule({ data, role, onRefresh }: { data: AssessmentWorkspaceData
       eyebrow={data.reportExport ? reportExportStatusLabel(data.reportExport.status) : "Not started"}
       tone={data.reportExport?.status === "ready_for_review" || data.reportExport?.status === "exported" ? "success" : "info"}
     >
-      <ReportAuthor assessmentId={data.assessment.id} assessmentName={data.assessment.assessment_name} marketRegion={data.assessment.market_region} role={role} sections={data.reportSections} reportExport={data.reportExport} onChanged={onRefresh} />
+      <ReportAuthor assessmentId={data.assessment.id} assessmentName={data.assessment.assessment_name} claimLinks={data.reportClaimEvidenceLinks} claims={data.reportClaims} evidenceSources={data.evidenceSources} findings={data.findings} latestPreflight={data.latestPreflight} marketRegion={data.assessment.market_region} role={role} sections={data.reportSections} sectionFindingLinks={data.reportSectionFindingLinks} reportExport={data.reportExport} onChanged={onRefresh} />
     </WorkItemPanel>
   );
 }

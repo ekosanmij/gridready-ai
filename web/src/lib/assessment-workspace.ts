@@ -1,5 +1,6 @@
 import {
   AssessmentFindingRecord,
+  EvidenceGapRecord,
   EvidenceReadinessSummary,
   EvidenceSourceRecord,
   FindingEvidenceLinkRecord,
@@ -10,7 +11,11 @@ import { AssessmentStatus, assessmentStatuses, statusLabel } from "@/lib/intake"
 import { single } from "@/lib/portal-assessments";
 import {
   AssessmentReportExportRecord,
+  AssessmentPreflightRunRecord,
   AssessmentReportSectionRecord,
+  ReportClaimEvidenceLinkRecord,
+  ReportClaimRecord,
+  ReportSectionFindingLinkRecord,
   reportExportStatusLabel,
   reportSectionStatusLabel,
 } from "@/lib/report-builder";
@@ -161,6 +166,7 @@ export type AssessmentWorkspaceData = {
   assessmentEvents: AssessmentEventRecord[];
   duplicateSignals: DuplicateAssessmentSignal[];
   evidenceLinks: FindingEvidenceLinkRecord[];
+  evidenceGaps: EvidenceGapRecord[];
   evidenceReadiness: EvidenceReadinessSummary;
   evidenceSources: EvidenceSourceRecord[];
   expertReview: ExpertReviewRecord | null;
@@ -169,6 +175,10 @@ export type AssessmentWorkspaceData = {
   gridAssets: GridAssetRecord[];
   notes: NoteRecord[];
   reportExport: AssessmentReportExportRecord | null;
+  reportClaimEvidenceLinks: ReportClaimEvidenceLinkRecord[];
+  reportClaims: ReportClaimRecord[];
+  reportSectionFindingLinks: ReportSectionFindingLinkRecord[];
+  latestPreflight: AssessmentPreflightRunRecord | null;
   reportSections: AssessmentReportSectionRecord[];
   scoreCalculation: AssessmentScoreCalculationRecord | null;
   scoreSummary: ReturnType<typeof calculateScorecardSummary>;

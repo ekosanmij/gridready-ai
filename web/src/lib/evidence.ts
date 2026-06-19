@@ -53,21 +53,64 @@ export const findingStatuses = [
   { value: "superseded", label: "Superseded" },
 ] as const;
 
+export const evidenceRelationships = [
+  { value: "supporting", label: "Supporting" },
+  { value: "contradicting", label: "Contradicting" },
+  { value: "context", label: "Context" },
+] as const;
+
+export const supportStatuses = [
+  { value: "unsupported", label: "Unsupported" },
+  { value: "supported", label: "Supported" },
+  { value: "contradicted", label: "Contradicted" },
+  { value: "mixed", label: "Mixed evidence" },
+  { value: "not_applicable", label: "Not applicable" },
+] as const;
+
+export const evidenceGapCategories = [
+  { value: "grid", label: "Grid" },
+  { value: "interconnection", label: "Interconnection" },
+  { value: "reliability", label: "Reliability" },
+  { value: "market", label: "Market" },
+  { value: "site", label: "Site" },
+  { value: "permitting", label: "Permitting" },
+  { value: "water", label: "Water" },
+  { value: "environmental", label: "Environmental" },
+  { value: "commercial", label: "Commercial" },
+  { value: "source_quality", label: "Source quality" },
+  { value: "other", label: "Other" },
+] as const;
+
+export const evidenceGapStatuses = [
+  { value: "open", label: "Open" },
+  { value: "in_progress", label: "In progress" },
+  { value: "resolved", label: "Resolved from source" },
+  { value: "accepted_unknown", label: "Accepted unknown" },
+  { value: "exception_approved", label: "Exception approved" },
+] as const;
+
 export type EvidenceSourceType = (typeof evidenceSourceTypes)[number]["value"];
 export type FindingModuleKey = (typeof findingModules)[number]["value"];
 export type FindingType = (typeof findingTypes)[number]["value"];
 export type RiskLevel = (typeof riskLevels)[number]["value"];
 export type EvidenceConfidenceLevel = (typeof evidenceConfidenceLevels)[number]["value"];
 export type FindingStatus = (typeof findingStatuses)[number]["value"];
+export type EvidenceRelationship = (typeof evidenceRelationships)[number]["value"];
+export type SupportStatus = (typeof supportStatuses)[number]["value"];
+export type EvidenceGapCategory = (typeof evidenceGapCategories)[number]["value"];
+export type EvidenceGapStatus = (typeof evidenceGapStatuses)[number]["value"];
 
 export type EvidenceSourceRecord = {
   accessed_at: string | null;
+  authored_by: string | null;
   confidence_level: EvidenceConfidenceLevel;
   created_at: string;
   file_reference: string | null;
   id: string;
   license_notes: string | null;
   limitation_notes: string | null;
+  metadata_version?: number;
+  notes: string | null;
   published_at: string | null;
   publisher: string | null;
   site_assessment_id: string;
@@ -90,6 +133,7 @@ export type AssessmentFindingRecord = {
   site_assessment_id: string;
   statement: string | null;
   status: FindingStatus;
+  support_status: SupportStatus;
   title: string;
   updated_at: string;
 };
@@ -99,7 +143,9 @@ export type FindingEvidenceLinkRecord = {
   evidence_source_id: string;
   finding_id: string;
   id: string;
+  linked_by: string | null;
   link_note: string | null;
+  relationship: EvidenceRelationship;
 };
 
 export type EvidenceSourceDraft = {
@@ -108,6 +154,7 @@ export type EvidenceSourceDraft = {
   fileReference: string;
   licenseNotes: string;
   limitationNotes: string;
+  notes: string;
   publishedAt: string;
   publisher: string;
   sourceType: EvidenceSourceType;
@@ -126,6 +173,45 @@ export type AssessmentFindingDraft = {
   riskLevel: RiskLevel;
   statement: string;
   status: FindingStatus;
+  supportStatus: SupportStatus;
+  title: string;
+};
+
+export type EvidenceGapRecord = {
+  approved_exception_id: string | null;
+  blocks_confidence: boolean;
+  blocks_delivery: boolean;
+  blocks_review: boolean;
+  category: EvidenceGapCategory;
+  created_at: string;
+  description: string | null;
+  due_at: string | null;
+  id: string;
+  impact: string;
+  owner_id: string | null;
+  resolution_note: string | null;
+  resolution_type: "accepted_unknown" | "approved_exception" | "source" | null;
+  resolved_source_id: string | null;
+  severity: Exclude<RiskLevel, "unknown">;
+  site_assessment_id: string;
+  status: EvidenceGapStatus;
+  title: string;
+  updated_at: string;
+};
+
+export type EvidenceGapDraft = {
+  blocksConfidence: boolean;
+  blocksDelivery: boolean;
+  blocksReview: boolean;
+  category: EvidenceGapCategory;
+  description: string;
+  dueAt: string;
+  impact: string;
+  ownerId: string;
+  resolutionNote: string;
+  resolvedSourceId: string;
+  severity: EvidenceGapRecord["severity"];
+  status: EvidenceGapStatus;
   title: string;
 };
 
@@ -147,6 +233,7 @@ export const blankEvidenceSourceDraft: EvidenceSourceDraft = {
   fileReference: "",
   licenseNotes: "",
   limitationNotes: "",
+  notes: "",
   publishedAt: "",
   publisher: "",
   sourceType: "official_iso_rto",
@@ -165,6 +252,23 @@ export const blankAssessmentFindingDraft: AssessmentFindingDraft = {
   riskLevel: "unknown",
   statement: "",
   status: "open",
+  supportStatus: "unsupported",
+  title: "",
+};
+
+export const blankEvidenceGapDraft: EvidenceGapDraft = {
+  blocksConfidence: true,
+  blocksDelivery: false,
+  blocksReview: false,
+  category: "other",
+  description: "",
+  dueAt: "",
+  impact: "",
+  ownerId: "",
+  resolutionNote: "",
+  resolvedSourceId: "",
+  severity: "medium",
+  status: "open",
   title: "",
 };
 
@@ -176,6 +280,7 @@ export function createEvidenceSourceDraft(source?: EvidenceSourceRecord | null):
         fileReference: source.file_reference ?? "",
         licenseNotes: source.license_notes ?? "",
         limitationNotes: source.limitation_notes ?? "",
+        notes: source.notes ?? "",
         publishedAt: source.published_at ?? "",
         publisher: source.publisher ?? "",
         sourceType: source.source_type,
@@ -201,9 +306,47 @@ export function createAssessmentFindingDraft(
         riskLevel: finding.risk_level,
         statement: finding.statement ?? "",
         status: finding.status,
+        supportStatus: finding.support_status,
         title: finding.title,
       }
     : { ...blankAssessmentFindingDraft, linkedEvidenceSourceIds: [] };
+}
+
+export function createEvidenceGapDraft(gap?: EvidenceGapRecord | null): EvidenceGapDraft {
+  return gap
+    ? {
+        blocksConfidence: gap.blocks_confidence,
+        blocksDelivery: gap.blocks_delivery,
+        blocksReview: gap.blocks_review,
+        category: gap.category,
+        description: gap.description ?? "",
+        dueAt: gap.due_at?.slice(0, 16) ?? "",
+        impact: gap.impact,
+        ownerId: gap.owner_id ?? "",
+        resolutionNote: gap.resolution_note ?? "",
+        resolvedSourceId: gap.resolved_source_id ?? "",
+        severity: gap.severity,
+        status: gap.status,
+        title: gap.title,
+      }
+    : { ...blankEvidenceGapDraft };
+}
+
+export function validateEvidenceSourceDraft(draft: EvidenceSourceDraft, hasFile: boolean) {
+  const errors: string[] = [];
+  if (!draft.title.trim()) errors.push("Title is required.");
+  if (!draft.summary.trim()) errors.push("A source summary or excerpt is required.");
+  if (!draft.notes.trim()) errors.push("Analyst notes are required.");
+  if (draft.confidenceLevel === "unknown") errors.push("Select a supported confidence level.");
+  if (!draft.url.trim() && !draft.fileReference.trim() && !hasFile) errors.push("Add a source URL or evidence file.");
+  if (draft.url.trim() && !draft.accessedAt) errors.push("An access date is required for URL sources.");
+  if (["commercial_dataset", "government_regulator", "official_iso_rto", "public_gis_dataset", "utility_tsp_dsp"].includes(draft.sourceType) && !draft.publisher.trim()) {
+    errors.push("Publisher is required for this source type.");
+  }
+  if (["commercial_dataset", "unverified_web"].includes(draft.sourceType) && !draft.licenseNotes.trim() && !draft.limitationNotes.trim()) {
+    errors.push("Licence or limitation details are required for this source type.");
+  }
+  return errors;
 }
 
 export function evidenceSourceTypeLabel(value: string) {
@@ -307,7 +450,9 @@ export function calculateEvidenceReadiness(
   findings: AssessmentFindingRecord[],
   links: FindingEvidenceLinkRecord[],
 ): EvidenceReadinessSummary {
-  const findingIdsWithEvidence = new Set(links.map((link) => link.finding_id));
+  const findingIdsWithEvidence = new Set(
+    links.filter((link) => link.relationship === "supporting").map((link) => link.finding_id),
+  );
   const sourcesById = new Map(sources.map((source) => [source.id, source]));
 
   const findingsWithEvidence = findings.filter((finding) => findingIdsWithEvidence.has(finding.id)).length;

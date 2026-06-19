@@ -54,12 +54,12 @@ export function EvidenceWorkbench() {
           .limit(200),
         supabase
           .from("evidence_sources")
-          .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, summary, created_at, updated_at")
+          .select("id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, notes, authored_by, metadata_version, summary, created_at, updated_at")
           .order("updated_at", { ascending: false })
           .limit(200),
         supabase
           .from("assessment_findings")
-          .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, created_at, updated_at")
+          .select("id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, support_status, created_at, updated_at")
           .order("updated_at", { ascending: false })
           .limit(200),
       ]);

@@ -4,8 +4,10 @@ import { useState } from "react";
 import { Download, ExternalLink, FilePlus2, Loader2, Save } from "lucide-react";
 import Link from "next/link";
 import { canAuthorReports, type AppRole } from "@/components/auth/auth-provider";
+import { ReportLineagePreflight } from "@/components/assessment-workspace/report-lineage-preflight";
 import { FieldControl, StatusPill, primaryButtonClass, secondaryButtonClass, textareaClass, inputClass } from "@/components/ui-primitives";
-import { type AssessmentReportExportRecord, type AssessmentReportSectionRecord, reportSectionStatuses } from "@/lib/report-builder";
+import { type AssessmentPreflightRunRecord, type AssessmentReportExportRecord, type AssessmentReportSectionRecord, type ReportClaimEvidenceLinkRecord, type ReportClaimRecord, type ReportSectionFindingLinkRecord, reportSectionStatuses } from "@/lib/report-builder";
+import type { AssessmentFindingRecord, EvidenceSourceRecord } from "@/lib/evidence";
 import { supabase } from "@/lib/supabase";
 
 type Draft = { content: string; status: string };
@@ -15,12 +17,18 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character] ?? character);
 }
 
-export function ReportAuthor({ assessmentId, assessmentName, marketRegion, role, sections, reportExport, onChanged }: {
+export function ReportAuthor({ assessmentId, assessmentName, claimLinks, claims, evidenceSources, findings, latestPreflight, marketRegion, role, sections, sectionFindingLinks, reportExport, onChanged }: {
   assessmentId: string;
   assessmentName: string;
+  claimLinks: ReportClaimEvidenceLinkRecord[];
+  claims: ReportClaimRecord[];
+  evidenceSources: EvidenceSourceRecord[];
+  findings: AssessmentFindingRecord[];
+  latestPreflight: AssessmentPreflightRunRecord | null;
   marketRegion: string;
   role: AppRole;
   sections: AssessmentReportSectionRecord[];
+  sectionFindingLinks: ReportSectionFindingLinkRecord[];
   reportExport: AssessmentReportExportRecord | null;
   onChanged: () => void;
 }) {
@@ -85,14 +93,7 @@ export function ReportAuthor({ assessmentId, assessmentName, marketRegion, role,
     anchor.download = `${assessmentName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-report.html`;
     anchor.click();
     URL.revokeObjectURL(url);
-    if (supabase && reportExport) {
-      await supabase.from("assessment_report_exports").update({ status: "exported" }).eq("id", reportExport.id);
-    } else if (supabase && sections[0]) {
-      const { data: templateSection } = await supabase.from("report_template_sections").select("template_id").eq("id", sections[0].template_section_id).maybeSingle();
-      if (templateSection) {
-        await supabase.from("assessment_report_exports").upsert({ site_assessment_id: assessmentId, template_id: templateSection.template_id, export_type: "print_preview", status: "exported" }, { onConflict: "site_assessment_id,template_id,export_type" });
-      }
-    }
+    setMessage("Draft HTML downloaded. This does not create or mark a final report artifact.");
   }
 
   if (sections.length === 0) {
@@ -103,13 +104,15 @@ export function ReportAuthor({ assessmentId, assessmentName, marketRegion, role,
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
         <div><StatusPill tone="info">{sections.length} sections</StatusPill><p className="mt-1 text-xs text-[var(--color-text-secondary)]">Author, review, and export without leaving the workbench.</p></div>
-        <div className="flex flex-wrap gap-2"><button type="button" className={secondaryButtonClass} onClick={() => void exportHtml()}><Download size={16} /> Download HTML</button><Link href={`/intake/reports/${assessmentId}`} target="_blank" className={primaryButtonClass}><ExternalLink size={16} /> Print / PDF</Link></div>
+        <div className="flex flex-wrap gap-2"><button type="button" className={secondaryButtonClass} onClick={() => void exportHtml()}><Download size={16} /> Download draft HTML</button><Link href={`/intake/reports/${assessmentId}`} target="_blank" className={primaryButtonClass}><ExternalLink size={16} /> Draft preview</Link></div>
       </div>
       {sections.map((section) => {
         const draft = drafts[section.id] ?? { content: section.content, status: section.status };
-        return <article key={section.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-4"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]"><FieldControl label={section.title}><textarea className={textareaClass} disabled={!editable} rows={8} value={draft.content} onChange={(event) => setDrafts((current) => ({ ...current, [section.id]: { ...draft, content: event.target.value } }))} /></FieldControl><div className="space-y-3"><FieldControl label="Status"><select className={inputClass} disabled={!editable} value={draft.status} onChange={(event) => setDrafts((current) => ({ ...current, [section.id]: { ...draft, status: event.target.value } }))}>{reportSectionStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></FieldControl>{editable ? <button type="button" disabled={savingId === section.id} className={`${primaryButtonClass} w-full`} onClick={() => void save(section)}>{savingId === section.id ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save section</button> : null}</div></div></article>;
+        const allowedStatuses = section.status === "final" ? reportSectionStatuses : reportSectionStatuses.filter((status) => status.value !== "final");
+        return <article key={section.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-4"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]"><FieldControl label={section.title}><textarea className={textareaClass} disabled={!editable} rows={8} value={draft.content} onChange={(event) => setDrafts((current) => ({ ...current, [section.id]: { ...draft, content: event.target.value } }))} /></FieldControl><div className="space-y-3"><FieldControl label="Status"><select className={inputClass} disabled={!editable} value={draft.status} onChange={(event) => setDrafts((current) => ({ ...current, [section.id]: { ...draft, status: event.target.value } }))}>{allowedStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></FieldControl>{editable ? <button type="button" disabled={savingId === section.id} className={`${primaryButtonClass} w-full`} onClick={() => void save(section)}>{savingId === section.id ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Save section</button> : null}</div></div></article>;
       })}
       {message ? <p aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">{message}</p> : null}
+      <ReportLineagePreflight assessmentId={assessmentId} claimLinks={claimLinks} claims={claims} findings={findings} latestPreflight={latestPreflight} onChanged={onChanged} reportExport={reportExport} role={role} sections={sections} sectionFindingLinks={sectionFindingLinks} sources={evidenceSources} />
     </div>
   );
 }
