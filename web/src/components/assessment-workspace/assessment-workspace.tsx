@@ -32,6 +32,7 @@ import { type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { AssignmentControls } from "@/components/assessment-workspace/assignment-controls";
 import { EvidenceGapEditor } from "@/components/assessment-workspace/evidence-gap-editor";
 import { EvidenceEditor } from "@/components/assessment-workspace/evidence-editor";
+import { ExpertReviewEditor } from "@/components/assessment-workspace/expert-review-editor";
 import { FindingEditor } from "@/components/assessment-workspace/finding-editor";
 import { ReportAuthor } from "@/components/assessment-workspace/report-author";
 import { ScorecardEditor } from "@/components/assessment-workspace/scorecard-editor";
@@ -82,6 +83,7 @@ import {
   AssessmentScoreCalculationRecord,
   AssessmentScoreRecord,
   AssessmentVerdictRecord,
+  ExpertReviewChecklistItemRecord,
   ExpertReviewRecord,
   calculateDeliveryGates,
   countCriticalFindings,
@@ -178,6 +180,7 @@ export function AssessmentWorkspace({
           { data: scoreCalculationData, error: scoreCalculationError },
           { data: verdictData, error: verdictError },
           { data: reviewData, error: reviewError },
+          { data: reviewChecklistData, error: reviewChecklistError },
           { data: sectionData, error: sectionError },
           { data: exportData, error: exportError },
           { data: claimData, error: claimError },
@@ -235,11 +238,16 @@ export function AssessmentWorkspace({
             .maybeSingle(),
           supabase
             .from("expert_reviews")
-            .select("id, site_assessment_id, review_type, reviewer_name, status, trigger_reason, comments, required_changes, approved_at, created_at, updated_at")
+            .select("id, site_assessment_id, review_type, reviewer_name, reviewer_id, status, trigger_reason, comments, required_changes, approved_at, assigned_at, submitted_at, decision_at, decision_reason, report_export_id, report_export_version, created_at, updated_at")
             .eq("site_assessment_id", assessmentId)
             .order("created_at", { ascending: false })
             .limit(1)
             .maybeSingle(),
+          supabase
+            .from("expert_review_checklist_items")
+            .select("id, expert_review_id, site_assessment_id, item_key, label, status, reviewer_comment, required_change, created_at, updated_at")
+            .eq("site_assessment_id", assessmentId)
+            .order("item_key", { ascending: true }),
           supabase
             .from("assessment_report_sections")
             .select("id, site_assessment_id, template_section_id, section_key, title, content, status, is_edited, generated_at, generation_notes, updated_at")
@@ -247,7 +255,7 @@ export function AssessmentWorkspace({
             .order("updated_at", { ascending: false }),
           supabase
             .from("assessment_report_exports")
-            .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+            .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, version_number, finalized_at, finalization_snapshot, updated_at")
             .eq("site_assessment_id", assessmentId)
             .order("updated_at", { ascending: false })
             .limit(1),
@@ -298,6 +306,7 @@ export function AssessmentWorkspace({
           scoreCalculationError ||
           verdictError ||
           reviewError ||
+          reviewChecklistError ||
           sectionError ||
           exportError ||
           claimError ||
@@ -317,6 +326,7 @@ export function AssessmentWorkspace({
             scoreCalculationError ??
             verdictError ??
             reviewError ??
+            reviewChecklistError ??
             sectionError ??
             exportError ??
             claimError ??
@@ -381,6 +391,7 @@ export function AssessmentWorkspace({
           evidenceGaps: (gapData ?? []) as EvidenceGapRecord[],
           evidenceSources: (sourceData ?? []) as EvidenceSourceRecord[],
           expertReview: (reviewData as ExpertReviewRecord | null) ?? null,
+          expertReviewChecklist: (reviewChecklistData ?? []) as ExpertReviewChecklistItemRecord[],
           files: (fileData ?? []) as FileRecord[],
           findings,
           gridAssets: (gridAssetData ?? []) as GridAssetRecord[],
@@ -886,14 +897,17 @@ function ScorecardModule({ data, role, onRefresh }: { data: AssessmentWorkspaceD
       </WorkItemPanel>
 
       <WorkItemPanel title="Expert review" eyebrow={data.expertReview ? reviewStatusLabel(data.expertReview.status) : "Not started"} tone={triggerSummary.required ? "warning" : "success"}>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3">
-          <StatusPill tone={triggerSummary.required ? "warning" : "success"}>
-            {triggerSummary.required ? "Expert review required" : "No expert review trigger"}
-          </StatusPill>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-            {data.expertReview ? reviewStatusLabel(data.expertReview.status) : triggerSummary.reasonText || "No expert-review record yet."}
-          </p>
-        </div>
+        <ExpertReviewEditor
+          assessmentId={data.assessment.id}
+          checklistItems={data.expertReviewChecklist}
+          key={`${data.expertReview?.updated_at ?? "new"}-${data.expertReviewChecklist.map((item) => item.updated_at).join("-")}`}
+          onChanged={onRefresh}
+          reportExport={data.reportExport}
+          required={triggerSummary.required}
+          review={data.expertReview}
+          role={role}
+          triggerReason={triggerSummary.reasonText}
+        />
       </WorkItemPanel>
     </div>
   );

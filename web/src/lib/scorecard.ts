@@ -87,7 +87,25 @@ export const reviewStatuses = [
   { value: "in_review", label: "In review" },
   { value: "changes_requested", label: "Changes requested" },
   { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
   { value: "not_required", label: "Not required" },
+] as const;
+
+export const expertReviewChecklistDefinitions = [
+  { key: "scope_and_methodology", label: "Scope and methodology" },
+  { key: "evidence_and_claims", label: "Evidence and material claims" },
+  { key: "score_and_verdict", label: "Scorecard and verdict" },
+  { key: "risks_and_mitigations", label: "Risks and mitigations" },
+  { key: "assumptions_and_limitations", label: "Assumptions and limitations" },
+  { key: "delivery_package", label: "Delivery package completeness" },
+] as const;
+
+export const expertReviewChecklistStatuses = [
+  { value: "not_checked", label: "Not checked" },
+  { value: "pass", label: "Pass" },
+  { value: "warning", label: "Warning" },
+  { value: "fail", label: "Fail" },
+  { value: "not_applicable", label: "Not applicable" },
 ] as const;
 
 export const reviewTypes = [
@@ -104,6 +122,7 @@ export type ScoreModuleKey = (typeof scoreModules)[number]["value"];
 export type VerdictOption = (typeof verdictOptions)[number]["value"];
 export type ReviewStatus = (typeof reviewStatuses)[number]["value"];
 export type ReviewType = (typeof reviewTypes)[number]["value"];
+export type ExpertReviewChecklistStatus = (typeof expertReviewChecklistStatuses)[number]["value"];
 export type DeliveryGateStatus = "blocked" | "pass" | "risk";
 
 export type AssessmentScoreRecord = {
@@ -159,16 +178,44 @@ export type AssessmentScoreCalculationRecord = {
 
 export type ExpertReviewRecord = {
   approved_at: string | null;
+  assigned_at?: string | null;
   comments: string | null;
   created_at: string;
+  decision_at?: string | null;
+  decision_reason?: string | null;
   id: string;
+  report_export_id?: string | null;
+  report_export_version?: number | null;
   required_changes: string | null;
   review_type: ReviewType;
+  reviewer_id?: string | null;
   reviewer_name: string | null;
   site_assessment_id: string;
   status: ReviewStatus;
+  submitted_at?: string | null;
   trigger_reason: string | null;
   updated_at: string;
+};
+
+export type ExpertReviewChecklistItemRecord = {
+  created_at: string;
+  expert_review_id: string;
+  id: string;
+  item_key: string;
+  label: string;
+  reviewer_comment: string | null;
+  required_change: string | null;
+  site_assessment_id: string;
+  status: ExpertReviewChecklistStatus;
+  updated_at: string;
+};
+
+export type ExpertReviewChecklistDraft = {
+  comments: string;
+  itemKey: string;
+  label: string;
+  requiredChange: string;
+  status: ExpertReviewChecklistStatus;
 };
 
 export type AssessmentScoreDraft = {
@@ -194,6 +241,7 @@ export type AssessmentVerdictDraft = {
 
 export type ExpertReviewDraft = {
   comments: string;
+  decisionReason: string;
   requiredChanges: string;
   reviewerName: string;
   status: ReviewStatus;
@@ -252,6 +300,7 @@ export const blankVerdictDraft: AssessmentVerdictDraft = {
 
 export const blankExpertReviewDraft: ExpertReviewDraft = {
   comments: "",
+  decisionReason: "",
   requiredChanges: "",
   reviewerName: "",
   status: "not_started",
@@ -323,12 +372,28 @@ export function createExpertReviewDraft(record?: ExpertReviewRecord | null): Exp
   return record
     ? {
         comments: record.comments ?? "",
+        decisionReason: record.decision_reason ?? "",
         requiredChanges: record.required_changes ?? "",
         reviewerName: record.reviewer_name ?? "",
         status: record.status,
         triggerReason: record.trigger_reason ?? "",
       }
     : { ...blankExpertReviewDraft };
+}
+
+export function buildExpertReviewChecklistDrafts(records: ExpertReviewChecklistItemRecord[]) {
+  const recordsByKey = new Map(records.map((record) => [record.item_key, record]));
+
+  return expertReviewChecklistDefinitions.map<ExpertReviewChecklistDraft>((definition) => {
+    const record = recordsByKey.get(definition.key);
+    return {
+      comments: record?.reviewer_comment ?? "",
+      itemKey: definition.key,
+      label: definition.label,
+      requiredChange: record?.required_change ?? "",
+      status: record?.status ?? "not_checked",
+    };
+  });
 }
 
 export function parseScoreInput(value: string) {
@@ -588,6 +653,7 @@ export function reviewStatusTone(value: ReviewStatus) {
     not_required: "border-slate-200 bg-slate-100 text-slate-600",
     not_started: "border-slate-200 bg-white text-slate-700",
     requested: "border-amber-200 bg-amber-50 text-amber-800",
+    rejected: "border-rose-300 bg-rose-100 text-rose-900",
   };
 
   return styles[value];

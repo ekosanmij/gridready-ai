@@ -23,6 +23,7 @@ import {
   AssessmentScoreCalculationRecord,
   AssessmentScoreRecord,
   AssessmentVerdictRecord,
+  ExpertReviewChecklistItemRecord,
   ExpertReviewRecord,
   calculateDeliveryGates,
   calculateScorecardSummary,
@@ -170,6 +171,7 @@ export type AssessmentWorkspaceData = {
   evidenceReadiness: EvidenceReadinessSummary;
   evidenceSources: EvidenceSourceRecord[];
   expertReview: ExpertReviewRecord | null;
+  expertReviewChecklist: ExpertReviewChecklistItemRecord[];
   files: FileRecord[];
   findings: AssessmentFindingRecord[];
   gridAssets: GridAssetRecord[];

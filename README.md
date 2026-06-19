@@ -15,6 +15,7 @@ The app has moved beyond a static planning workspace into a working internal alp
 - Versioned readiness scoring, confidence calculation, canonical verdict history, and immutable score snapshots.
 - Report template and report-section authoring with print-friendly preview.
 - Evidence library, findings, source relationships, explicit evidence gaps, report-claim lineage, preflight runs, delivery exceptions, and server-controlled report finalisation.
+- Structured expert-review assignment, checklist comments, requested changes, rejection, and approval bound to an immutable report version.
 - Integration tests covering the application contracts that can be exercised without a live Supabase instance.
 
 This is not yet the full production MVP. The remaining work is tracked in `docs/product/GridReady AI Outstanding Development Specification.docx`.
@@ -23,9 +24,8 @@ This is not yet the full production MVP. The remaining work is tracked in `docs/
 
 Highest-priority remaining work:
 
-- Apply and validate the latest Supabase migrations in the target environment, especially `20260619200000_evidence_lineage_preflight.sql`.
+- Apply and validate the latest Supabase migrations in the target environment through `20260619230000_expert_review_version_approval.sql`.
 - Run the customer registration -> draft -> upload -> submission -> analyst assessment path against a real migrated Supabase project.
-- Finish structured expert review assignment, checklist comments, requested changes, approval, and rejection for the exact report version.
 - Generate server-side, versioned PDF and map artifacts rather than relying only on browser print/HTML preview.
 - Add secure report delivery for approved artifacts with customer access controls and delivery audit history.
 - Implement administrator workflows for invitations, membership changes, suspension, reassignment, and role-change audit reasons.
@@ -133,6 +133,7 @@ Current migration sequence:
 20260619200000_repair_customer_assessment_insert_policy.sql
 20260619210000_repair_provisioning_variable_conflict.sql
 20260619220000_repair_assessment_insert_returning_policy.sql
+20260619230000_expert_review_version_approval.sql
 ```
 
 Do not run these directly against production:

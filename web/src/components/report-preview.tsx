@@ -461,7 +461,7 @@ async function fetchReportPreviewState(assessmentId: string): Promise<PreviewSta
     template
       ? supabase
           .from("assessment_report_exports")
-          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, version_number, finalized_at, finalization_snapshot, updated_at")
           .eq("site_assessment_id", assessment.id)
           .eq("template_id", template.id)
           .eq("export_type", "print_preview")
@@ -478,7 +478,7 @@ async function fetchReportPreviewState(assessmentId: string): Promise<PreviewSta
       .maybeSingle(),
     supabase
       .from("expert_reviews")
-      .select("id, site_assessment_id, review_type, reviewer_name, status, trigger_reason, comments, required_changes, approved_at, created_at, updated_at")
+      .select("id, site_assessment_id, review_type, reviewer_name, reviewer_id, status, trigger_reason, comments, required_changes, approved_at, assigned_at, submitted_at, decision_at, decision_reason, report_export_id, report_export_version, created_at, updated_at")
       .eq("site_assessment_id", assessment.id)
       .eq("review_type", "final_report")
       .order("created_at", { ascending: false })

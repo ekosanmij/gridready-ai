@@ -94,6 +94,8 @@ export type AssessmentReportSectionRecord = {
 
 export type AssessmentReportExportRecord = {
   export_type: string;
+  finalization_snapshot?: Record<string, unknown>;
+  finalized_at?: string | null;
   id: string;
   notes: string | null;
   ready_for_review_at: string | null;
@@ -101,6 +103,7 @@ export type AssessmentReportExportRecord = {
   status: ReportExportStatus;
   template_id: string;
   updated_at: string;
+  version_number?: number;
 };
 
 export type ReportClaimRecord = {
