@@ -15,6 +15,7 @@ import {
   reportSectionStatusLabel,
 } from "@/lib/report-builder";
 import {
+  AssessmentScoreCalculationRecord,
   AssessmentScoreRecord,
   AssessmentVerdictRecord,
   ExpertReviewRecord,
@@ -169,6 +170,7 @@ export type AssessmentWorkspaceData = {
   notes: NoteRecord[];
   reportExport: AssessmentReportExportRecord | null;
   reportSections: AssessmentReportSectionRecord[];
+  scoreCalculation: AssessmentScoreCalculationRecord | null;
   scoreSummary: ReturnType<typeof calculateScorecardSummary>;
   scores: AssessmentScoreRecord[];
   statusHistory: StatusHistoryRecord[];

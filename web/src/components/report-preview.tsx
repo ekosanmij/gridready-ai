@@ -235,11 +235,13 @@ export function ReportPreview({ assessmentId }: { assessmentId: string }) {
             <PreviewBlock title="Verdict">
               <p>{state.verdict ? verdictLabel(state.verdict.verdict) : "Evidence pending"}</p>
               <p className="mt-2 text-slate-600">{state.verdict?.summary ?? "Evidence pending"}</p>
+              <p className="mt-2 text-slate-600">Confidence: {state.verdict?.confidence_level ?? "Evidence pending"}</p>
+              {state.verdict?.conditions ? <p className="mt-2 text-slate-600">Conditions: {state.verdict.conditions}</p> : null}
             </PreviewBlock>
             <PreviewBlock title="Scorecard">
               <p>{scoreSummary.completionPercent}% complete</p>
               <p className="mt-2 text-slate-600">
-                Average: {scoreSummary.averageScore === null ? "Evidence pending" : `${scoreSummary.averageScore}/100`}
+                Weighted readiness: {scoreSummary.averageScore === null ? "Evidence pending" : `${scoreSummary.averageScore}/100`}
               </p>
               <p className="text-slate-600">
                 Lowest: {scoreSummary.lowestScore ? `${scoreSummary.lowestScore.label} (${scoreSummary.lowestScore.score})` : "Evidence pending"}
@@ -467,11 +469,11 @@ async function fetchReportPreviewState(assessmentId: string): Promise<PreviewSta
       : Promise.resolve({ data: null, error: null }),
     supabase
       .from("assessment_scores")
-      .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, created_at, updated_at")
+      .select("id, site_assessment_id, module_key, score, risk_level, confidence_level, rationale, override_note, calculation_origin, is_derived, methodology_version_id, weight, weighted_contribution, created_at, updated_at")
       .eq("site_assessment_id", assessment.id),
     supabase
       .from("assessment_verdicts")
-      .select("id, site_assessment_id, verdict, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, created_at, updated_at")
+      .select("id, site_assessment_id, verdict, confidence_level, conditions, summary, key_strengths, key_risks, recommended_next_steps, limitations_note, approved_by_analyst, approved_at, authored_by, methodology_version_id, current_event_id, created_at, updated_at")
       .eq("site_assessment_id", assessment.id)
       .maybeSingle(),
     supabase
