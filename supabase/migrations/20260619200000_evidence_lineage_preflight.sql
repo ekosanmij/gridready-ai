@@ -1305,6 +1305,19 @@ alter table public.report_claim_evidence_links enable row level security;
 alter table public.report_section_finding_links enable row level security;
 alter table public.assessment_preflight_runs enable row level security;
 
+drop policy if exists evidence_source_events_internal_read on public.evidence_source_events;
+drop policy if exists delivery_exceptions_internal_read on public.assessment_delivery_exceptions;
+drop policy if exists delivery_exceptions_reviewer_manage on public.assessment_delivery_exceptions;
+drop policy if exists evidence_gaps_scoped_read on public.evidence_gaps;
+drop policy if exists evidence_gaps_analyst_manage on public.evidence_gaps;
+drop policy if exists report_claims_scoped_read on public.report_claims;
+drop policy if exists report_claims_author_manage on public.report_claims;
+drop policy if exists report_claim_evidence_links_scoped_read on public.report_claim_evidence_links;
+drop policy if exists report_claim_evidence_links_author_manage on public.report_claim_evidence_links;
+drop policy if exists report_section_finding_links_scoped_read on public.report_section_finding_links;
+drop policy if exists report_section_finding_links_author_manage on public.report_section_finding_links;
+drop policy if exists assessment_preflight_runs_internal_read on public.assessment_preflight_runs;
+
 create policy evidence_source_events_internal_read on public.evidence_source_events
   for select to authenticated
   using (public.is_internal_user() and public.can_access_assessment(site_assessment_id));
