@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  ExpertReviewChecklistDraft,
+  ExpertReviewDraft,
+  ExpertReviewRecord,
   AssessmentScoreDraft,
   AssessmentVerdictDraft,
   ScoreModuleKey,
@@ -70,4 +73,46 @@ export async function saveAssessmentVerdict(
   }
 
   return data;
+}
+
+export async function saveExpertReview(
+  client: SupabaseClient,
+  input: {
+    assessmentId: string;
+    checklist: ExpertReviewChecklistDraft[];
+    draft: ExpertReviewDraft;
+    reportExportId: string | null;
+    review: ExpertReviewRecord | null;
+  },
+) {
+  const { data, error } = await client
+    .rpc("save_expert_review_packet", {
+      p_assessment_id: input.assessmentId,
+      p_checklist: input.checklist.map((item) => ({
+        item_key: item.itemKey,
+        label: item.label,
+        reviewer_comment: item.comments.trim() || null,
+        required_change: item.requiredChange.trim() || null,
+        status: item.status,
+      })),
+      p_review: {
+        comments: input.draft.comments.trim() || null,
+        decision_reason: input.draft.decisionReason.trim() || null,
+        id: input.review?.id ?? null,
+        report_export_id: input.reportExportId,
+        required_changes: input.draft.requiredChanges.trim() || null,
+        review_type: input.review?.review_type ?? "final_report",
+        reviewer_id: input.review?.reviewer_id ?? null,
+        reviewer_name: input.draft.reviewerName.trim() || null,
+        status: input.draft.status,
+        trigger_reason: input.draft.triggerReason.trim() || null,
+      },
+    })
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as ExpertReviewRecord;
 }

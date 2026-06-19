@@ -56,7 +56,7 @@ export function ReportWorkbench() {
           .limit(200),
         supabase
           .from("assessment_report_exports")
-          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, version_number, finalized_at, finalization_snapshot, updated_at")
           .order("updated_at", { ascending: false })
           .limit(200),
       ]);

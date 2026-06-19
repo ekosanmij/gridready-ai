@@ -167,6 +167,7 @@ import {
   AssessmentVerdictDraft,
   AssessmentVerdictRecord,
   DeliveryGate,
+  ExpertReviewChecklistItemRecord,
   ExpertReviewDraft,
   ExpertReviewRecord,
   ExpertReviewTriggerSummary,
@@ -177,6 +178,7 @@ import {
   blankScoreDraft,
   blankVerdictDraft,
   buildScoreDrafts,
+  buildExpertReviewChecklistDrafts,
   calculateDeliveryGates,
   calculateScorecardSummary,
   countCriticalFindings,
@@ -196,7 +198,7 @@ import {
   verdictLabel,
   verdictOptions,
 } from "@/lib/scorecard";
-import { saveAssessmentScores, saveAssessmentVerdict } from "@/lib/scorecard-service";
+import { saveAssessmentScores, saveAssessmentVerdict, saveExpertReview as saveExpertReviewPacket } from "@/lib/scorecard-service";
 import { hasSupabaseConfig, supabase } from "@/lib/supabase";
 import {
   ThemePreference,
@@ -1301,7 +1303,7 @@ export function IntakeWorkspace() {
           .order("updated_at", { ascending: false }),
         supabase
           .from("assessment_report_exports")
-          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+          .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, version_number, finalized_at, finalization_snapshot, updated_at")
           .eq("site_assessment_id", assessmentId)
           .eq("template_id", template.id)
           .eq("export_type", "print_preview")
@@ -1364,7 +1366,7 @@ export function IntakeWorkspace() {
           .maybeSingle(),
         supabase
           .from("expert_reviews")
-          .select("id, site_assessment_id, review_type, reviewer_name, status, trigger_reason, comments, required_changes, approved_at, created_at, updated_at")
+          .select("id, site_assessment_id, review_type, reviewer_name, reviewer_id, status, trigger_reason, comments, required_changes, approved_at, assigned_at, submitted_at, decision_at, decision_reason, report_export_id, report_export_version, created_at, updated_at")
           .eq("site_assessment_id", assessmentId)
           .eq("review_type", "final_report")
           .order("created_at", { ascending: false })
@@ -2564,25 +2566,27 @@ export function IntakeWorkspace() {
     setScorecardError("");
     setSuccessMessage("");
 
-    const payload = {
-      site_assessment_id: selectedAssessment.id,
-      review_type: "final_report",
-      reviewer_name: expertReviewDraft.reviewerName.trim() || null,
-      status: expertReviewDraft.status,
-      trigger_reason: expertReviewDraft.triggerReason.trim() || expertReviewTriggers.reasonText || null,
-      comments: expertReviewDraft.comments.trim() || null,
-      required_changes: expertReviewDraft.requiredChanges.trim() || null,
-      approved_at:
-        expertReviewDraft.status === "approved"
-          ? expertReview?.approved_at ?? new Date().toISOString()
-          : null,
-    };
+    try {
+      const { data: checklistData, error: checklistError } = expertReview
+        ? await supabase
+            .from("expert_review_checklist_items")
+            .select("id, expert_review_id, site_assessment_id, item_key, label, status, reviewer_comment, required_change, created_at, updated_at")
+            .eq("expert_review_id", expertReview.id)
+        : { data: [], error: null };
 
-    const { error: saveError } = expertReview
-      ? await supabase.from("expert_reviews").update(payload).eq("id", expertReview.id)
-      : await supabase.from("expert_reviews").insert(payload);
+      if (checklistError) throw checklistError;
 
-    if (saveError) {
+      await saveExpertReviewPacket(supabase, {
+        assessmentId: selectedAssessment.id,
+        checklist: buildExpertReviewChecklistDrafts((checklistData ?? []) as ExpertReviewChecklistItemRecord[]),
+        draft: {
+          ...expertReviewDraft,
+          triggerReason: expertReviewDraft.triggerReason.trim() || expertReviewTriggers.reasonText,
+        },
+        reportExportId: reportExport?.id ?? null,
+        review: expertReview,
+      });
+    } catch (saveError) {
       setSavingExpertReview(false);
       setScorecardError(getErrorMessage(saveError, "Could not save expert review."));
       return;
@@ -2726,7 +2730,7 @@ export function IntakeWorkspace() {
         },
         { onConflict: "site_assessment_id,template_id,export_type" },
       )
-      .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, updated_at")
+      .select("id, site_assessment_id, template_id, export_type, status, notes, ready_for_review_at, version_number, finalized_at, finalization_snapshot, updated_at")
       .single();
 
     setSavingReportExport(false);
@@ -6429,6 +6433,17 @@ function DeliveryGatesPanel({
             className={textareaClass}
           />
         </label>
+        {["approved", "changes_requested", "rejected"].includes(expertReviewDraft.status) ? (
+          <label className="block lg:col-span-4">
+            <span className="mb-1.5 block text-sm font-semibold text-slate-700">Decision reason</span>
+            <textarea
+              value={expertReviewDraft.decisionReason}
+              onChange={(event) => onExpertReviewChange({ ...expertReviewDraft, decisionReason: event.target.value })}
+              rows={3}
+              className={textareaClass}
+            />
+          </label>
+        ) : null}
         <div className="lg:col-span-4">
           <button type="submit" disabled={savingExpertReview} className={primaryButtonClass}>
             {savingExpertReview ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
