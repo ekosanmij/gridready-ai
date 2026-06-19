@@ -5,6 +5,7 @@ import { Download, ExternalLink, FilePlus2, Loader2, Save } from "lucide-react";
 import Link from "next/link";
 import { canAuthorReports, type AppRole } from "@/components/auth/auth-provider";
 import { ReportLineagePreflight } from "@/components/assessment-workspace/report-lineage-preflight";
+import { ReportDeliveryPanel } from "@/components/assessment-workspace/report-delivery-panel";
 import { FieldControl, StatusPill, primaryButtonClass, secondaryButtonClass, textareaClass, inputClass } from "@/components/ui-primitives";
 import { type AssessmentPreflightRunRecord, type AssessmentReportExportRecord, type AssessmentReportSectionRecord, type ReportClaimEvidenceLinkRecord, type ReportClaimRecord, type ReportSectionFindingLinkRecord, reportSectionStatuses } from "@/lib/report-builder";
 import type { AssessmentFindingRecord, EvidenceSourceRecord } from "@/lib/evidence";
@@ -113,6 +114,7 @@ export function ReportAuthor({ assessmentId, assessmentName, claimLinks, claims,
       })}
       {message ? <p aria-live="polite" className="text-sm text-[var(--color-text-secondary)]">{message}</p> : null}
       <ReportLineagePreflight assessmentId={assessmentId} claimLinks={claimLinks} claims={claims} findings={findings} latestPreflight={latestPreflight} onChanged={onChanged} reportExport={reportExport} role={role} sections={sections} sectionFindingLinks={sectionFindingLinks} sources={evidenceSources} />
+      <ReportDeliveryPanel assessmentId={assessmentId} onChanged={onChanged} reportExport={reportExport} role={role} />
     </div>
   );
 }

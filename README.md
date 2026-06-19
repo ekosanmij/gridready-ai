@@ -16,6 +16,7 @@ The app has moved beyond a static planning workspace into a working internal alp
 - Report template and report-section authoring with print-friendly preview.
 - Evidence library, findings, source relationships, explicit evidence gaps, report-claim lineage, preflight runs, delivery exceptions, and server-controlled report finalisation.
 - Structured expert-review assignment, checklist comments, requested changes, rejection, and approval bound to an immutable report version.
+- Server-generated, versioned PDF and map artifacts with checksums, private storage, delivery preflight, organisation-scoped publication, revocation, expiring downloads, and audit history.
 - Integration tests covering the application contracts that can be exercised without a live Supabase instance.
 
 This is not yet the full production MVP. The remaining work is tracked in `docs/product/GridReady AI Outstanding Development Specification.docx`.
@@ -24,10 +25,8 @@ This is not yet the full production MVP. The remaining work is tracked in `docs/
 
 Highest-priority remaining work:
 
-- Apply and validate the latest Supabase migrations in the target environment through `20260619230000_expert_review_version_approval.sql`.
+- Apply and validate the latest Supabase migrations in the target environment through `20260620000000_report_artifacts_secure_delivery.sql`.
 - Run the customer registration -> draft -> upload -> submission -> analyst assessment path against a real migrated Supabase project.
-- Generate server-side, versioned PDF and map artifacts rather than relying only on browser print/HTML preview.
-- Add secure report delivery for approved artifacts with customer access controls and delivery audit history.
 - Implement administrator workflows for invitations, membership changes, suspension, reassignment, and role-change audit reasons.
 - Complete operational controls: malware scanning worker implementation, document extraction workers, notifications, retention, backup/recovery, observability, and incident-friendly logs.
 - Add CI coverage for real database/RLS tests, browser E2E tests, accessibility, performance, and staging release checks.
@@ -63,8 +62,9 @@ The intended single-site pilot flow is:
 2. An analyst triages the request, accepts or rejects inferred values, reviews GIS context, manages evidence and findings, completes checklist and scoring work, and records a verdict.
 3. The report builder creates editable sections from structured intake, GIS, checklist, evidence, finding, score, verdict, and review data.
 4. The evidence-lineage preflight blocks unsupported material claims, unresolved delivery-blocking evidence gaps, incomplete score/verdict state, and unapproved report sections.
-5. A reviewer or administrator approves justified exceptions where appropriate.
-6. The system generates and securely delivers an immutable approved report package. This final artifact generation and delivery step is still outstanding.
+5. A reviewer completes the structured checklist and approves, rejects, or requests changes against the exact finalised report version; authorised exceptions remain separately audited.
+6. An analyst generates the immutable, checksumed PDF and site-map package from the approved version snapshot.
+7. Delivery publishes that version only to active customer members of the assessment organisation through revocable, 60-second signed download links with audit history.
 
 ## Web App Setup
 
@@ -134,6 +134,7 @@ Current migration sequence:
 20260619210000_repair_provisioning_variable_conflict.sql
 20260619220000_repair_assessment_insert_returning_policy.sql
 20260619230000_expert_review_version_approval.sql
+20260620000000_report_artifacts_secure_delivery.sql
 ```
 
 Do not run these directly against production:
@@ -172,17 +173,16 @@ Use the server/database functions rather than writing protected records directly
 - `run_assessment_preflight` for auditable delivery or review blocker checks.
 - `approve_delivery_exception` for reviewer/admin exception approval.
 - `finalize_assessment_report` for server-controlled final report state.
+- `save_expert_review_packet` for version-bound reviewer assignment, checklist and decisions.
+- `request_report_artifact_generation`, `complete_report_artifact_generation`, and `fail_report_artifact_generation` for controlled, retryable issued artifacts.
+- `deliver_report_version` and `revoke_report_delivery` for organisation-scoped publication and revocation.
+- `authorize_report_artifact_download` and `record_report_artifact_download` for expiring downloads and audit history.
 
 Direct client writes that bypass these controls should be treated as defects.
 
-## GitHub Status
+## GitHub Workflow
 
-The latest implementation tranche was merged through PR #11:
-
-- PR: `https://github.com/ekosanmij/gridready-ai/pull/11`
-- Merge commit: `5a1579a`
-- Scope: customer intake/RLS repairs plus evidence lineage and report-delivery preflight.
-- Remote checks: Vercel passed.
+Implementation tranches are developed on `codex/*` branches, validated locally, opened as focused pull requests, and merged to `main` only after required remote checks pass. Use the GitHub pull-request history as the authoritative release record rather than maintaining a duplicated latest-PR pointer here.
 
 ## Development Notes
 
