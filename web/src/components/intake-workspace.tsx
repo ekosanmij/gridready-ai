@@ -100,6 +100,8 @@ import {
   riskLevelLabel,
   riskLevelTone,
   riskLevels,
+  supportStatuses,
+  validateEvidenceSourceDraft,
 } from "@/lib/evidence";
 import {
   GridAssetDraft,
@@ -142,6 +144,7 @@ import {
 import { allowedAssessmentTransitions, transitionAssessmentStatus } from "@/lib/assessment-workflow";
 import {
   AssessmentReportExportRecord,
+  AssessmentPreflightRunRecord,
   AssessmentReportSectionRecord,
   ReportExportStatus,
   ReportGenerationContext,
@@ -489,7 +492,8 @@ function isBlankEvidenceSourceDraft(draft: EvidenceSourceDraft) {
     !draft.url.trim() &&
     !draft.publisher.trim() &&
     !draft.licenseNotes.trim() &&
-    !draft.limitationNotes.trim()
+    !draft.limitationNotes.trim() &&
+    !draft.notes.trim()
   );
 }
 
@@ -1416,14 +1420,14 @@ export function IntakeWorkspace() {
         supabase
           .from("evidence_sources")
           .select(
-            "id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, summary, created_at, updated_at",
+            "id, site_assessment_id, title, source_type, publisher, url, file_reference, accessed_at, published_at, confidence_level, license_notes, limitation_notes, notes, authored_by, metadata_version, summary, created_at, updated_at",
           )
           .eq("site_assessment_id", assessmentId)
           .order("created_at", { ascending: false }),
         supabase
           .from("assessment_findings")
           .select(
-            "id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, created_at, updated_at",
+            "id, site_assessment_id, module_key, title, finding_type, risk_level, confidence_level, statement, assumption_note, recommendation, status, support_status, created_at, updated_at",
           )
           .eq("site_assessment_id", assessmentId)
           .order("created_at", { ascending: false }),
@@ -1441,7 +1445,7 @@ export function IntakeWorkspace() {
       if (findingIds.length > 0) {
         const { data: linkData, error: linkError } = await supabase
           .from("finding_evidence_links")
-          .select("id, finding_id, evidence_source_id, link_note, created_at")
+          .select("id, finding_id, evidence_source_id, relationship, link_note, linked_by, created_at")
           .in("finding_id", findingIds)
           .order("created_at", { ascending: false });
 
@@ -2288,8 +2292,9 @@ export function IntakeWorkspace() {
       return;
     }
 
-    if (!newEvidenceSource.title.trim()) {
-      setEvidenceError("Evidence source title is required.");
+    const validationErrors = validateEvidenceSourceDraft(newEvidenceSource, false);
+    if (validationErrors.length > 0) {
+      setEvidenceError(validationErrors.join(" "));
       return;
     }
 
@@ -2309,6 +2314,7 @@ export function IntakeWorkspace() {
       confidence_level: newEvidenceSource.confidenceLevel,
       license_notes: newEvidenceSource.licenseNotes.trim() || null,
       limitation_notes: newEvidenceSource.limitationNotes.trim() || null,
+      notes: newEvidenceSource.notes.trim() || null,
       summary: newEvidenceSource.summary.trim() || null,
     };
     const isCreatingEvidenceSource = !editingEvidenceSourceId;
@@ -2374,7 +2380,6 @@ export function IntakeWorkspace() {
 
     try {
       const payload = {
-        site_assessment_id: selectedAssessment.id,
         module_key: newFinding.moduleKey,
         title: newFinding.title.trim(),
         finding_type: newFinding.findingType,
@@ -2384,60 +2389,15 @@ export function IntakeWorkspace() {
         assumption_note: newFinding.assumptionNote.trim() || null,
         recommendation: newFinding.recommendation.trim() || null,
         status: newFinding.status,
+        support_status: newFinding.supportStatus,
       };
-
-      let findingId = editingFindingId;
-
-      if (editingFindingId) {
-        const { error: updateError } = await supabase
-          .from("assessment_findings")
-          .update(payload)
-          .eq("id", editingFindingId);
-
-        if (updateError) {
-          throw updateError;
-        }
-      } else {
-        const { data: createdFinding, error: insertError } = await supabase
-          .from("assessment_findings")
-          .insert(payload)
-          .select("id")
-          .single();
-
-        if (insertError) {
-          throw insertError;
-        }
-
-        findingId = createdFinding.id as string;
-      }
-
-      if (!findingId) {
-        throw new Error("Could not determine the saved finding ID.");
-      }
-
-      if (editingFindingId) {
-        const { error: deleteLinkError } = await supabase
-          .from("finding_evidence_links")
-          .delete()
-          .eq("finding_id", findingId);
-
-        if (deleteLinkError) {
-          throw deleteLinkError;
-        }
-      }
-
-      if (linkedEvidenceSourceIds.length > 0) {
-        const { error: linkError } = await supabase.from("finding_evidence_links").insert(
-          linkedEvidenceSourceIds.map((evidenceSourceId) => ({
-            finding_id: findingId,
-            evidence_source_id: evidenceSourceId,
-          })),
-        );
-
-        if (linkError) {
-          throw linkError;
-        }
-      }
+      const { data: savedFinding, error: findingRpcError } = await supabase.rpc("save_assessment_finding", {
+        p_assessment_id: selectedAssessment.id,
+        p_finding: { ...payload, id: editingFindingId || null },
+        p_links: linkedEvidenceSourceIds.map((evidenceSourceId) => ({ evidence_source_id: evidenceSourceId, relationship: "supporting" })),
+      }).single();
+      if (findingRpcError) throw findingRpcError;
+      const findingId = (savedFinding as { id: string }).id;
 
       setNewFinding({ ...blankAssessmentFindingDraft, linkedEvidenceSourceIds: [] });
       setEditingFindingId("");
@@ -2712,12 +2672,54 @@ export function IntakeWorkspace() {
     setReportBuilderError("");
     setSuccessMessage("");
 
+    if (status === "ready_for_review") {
+      let exportId = reportExport?.id ?? "";
+      if (!exportId) {
+        const { data: initializedExport, error: initializeError } = await supabase
+          .from("assessment_report_exports")
+          .upsert({
+            export_type: "print_preview",
+            site_assessment_id: selectedAssessment.id,
+            status: "draft_generated",
+            template_id: reportTemplate.id,
+          }, { onConflict: "site_assessment_id,template_id,export_type" })
+          .select("id")
+          .single();
+        if (initializeError) {
+          setSavingReportExport(false);
+          setReportBuilderError(getErrorMessage(initializeError, "Could not initialize the report package."));
+          return;
+        }
+        exportId = initializedExport.id as string;
+      }
+
+      const { data: finalizationData, error: finalizationError } = await supabase.rpc("finalize_assessment_report", {
+        p_assessment_id: selectedAssessment.id,
+        p_export_id: exportId,
+      });
+      setSavingReportExport(false);
+      if (finalizationError) {
+        setReportBuilderError(getErrorMessage(finalizationError, "Could not run report preflight."));
+        return;
+      }
+      const result = finalizationData as { export: AssessmentReportExportRecord; finalized: boolean; preflight: AssessmentPreflightRunRecord };
+      if (!result.finalized) {
+        setReportBuilderError(result.preflight.blockers.map((blocker) => `${blocker.label}${blocker.remediation ? ` — ${blocker.remediation}` : ""}`).join(" "));
+        return;
+      }
+      setReportExport(result.export);
+      setSuccessMessage(message);
+      trackWorkflowEvent("report_marked_ready", { assessmentId: selectedAssessment.id, reportExportId: result.export.id });
+      await loadReportBuilderForAssessment(selectedAssessment.id, selectedAssessment.market_region);
+      return;
+    }
+
     const { data, error: saveError } = await supabase
       .from("assessment_report_exports")
       .upsert(
         {
           export_type: "print_preview",
-          ready_for_review_at: status === "ready_for_review" ? new Date().toISOString() : null,
+          ready_for_review_at: null,
           site_assessment_id: selectedAssessment.id,
           status,
           template_id: reportTemplate.id,
@@ -2736,12 +2738,6 @@ export function IntakeWorkspace() {
 
     setReportExport(data as AssessmentReportExportRecord);
     setSuccessMessage(message);
-    if (status === "ready_for_review") {
-      trackWorkflowEvent("report_marked_ready", {
-        assessmentId: selectedAssessment.id,
-        reportExportId: (data as AssessmentReportExportRecord).id,
-      });
-    }
   }
 
   async function saveReportSection(templateSectionId: string) {
@@ -6696,6 +6692,9 @@ function ReportBuilderPanel({
           const hasGap = hasEvidenceGap(draft.content);
           const isSaving = savingSectionId === templateSection.id;
           const isExpanded = expandedReportSectionIds.has(templateSection.id);
+          const allowedSectionStatuses = savedSection?.status === "final"
+            ? reportSectionStatuses
+            : reportSectionStatuses.filter((status) => status.value !== "final");
           const hasUnsavedChanges = savedSection
             ? savedSection.content !== draft.content || savedSection.status !== draft.status
             : draft.content.trim().length > 0;
@@ -6753,7 +6752,7 @@ function ReportBuilderPanel({
                     <SelectField
                       label="Section status"
                       value={draft.status}
-                      options={reportSectionStatuses}
+                      options={allowedSectionStatuses}
                       onChange={(value) => onSectionChange(templateSection.id, { status: value as ReportSectionStatus })}
                     />
                     <label className="block min-w-0">
@@ -6930,6 +6929,15 @@ function EvidenceLibraryPanel({
           <textarea
             value={draft.limitationNotes}
             onChange={(event) => onChange({ ...draft, limitationNotes: event.target.value })}
+            rows={3}
+            className={textareaClass}
+          />
+        </label>
+        <label className="block lg:col-span-2">
+          <span className="mb-1.5 block text-sm font-semibold text-slate-700">Analyst notes</span>
+          <textarea
+            value={draft.notes}
+            onChange={(event) => onChange({ ...draft, notes: event.target.value })}
             rows={3}
             className={textareaClass}
           />
@@ -7143,7 +7151,12 @@ function FindingsPanel({
           options={findingStatuses}
           onChange={(value) => onChange({ ...draft, status: value as AssessmentFindingDraft["status"] })}
         />
-        <div className="hidden lg:block" />
+        <SelectField
+          label="Support"
+          value={draft.supportStatus}
+          options={supportStatuses.filter((status) => status.value !== "contradicted" && status.value !== "mixed")}
+          onChange={(value) => onChange({ ...draft, supportStatus: value as AssessmentFindingDraft["supportStatus"] })}
+        />
         <label className="block lg:col-span-2">
           <span className="mb-1.5 block text-sm font-semibold text-slate-700">Statement</span>
           <textarea

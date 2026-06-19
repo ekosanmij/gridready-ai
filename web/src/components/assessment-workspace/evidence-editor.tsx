@@ -5,7 +5,7 @@ import { Download, Edit3, Loader2, Plus, Save, Upload } from "lucide-react";
 import { canManageAssessments, type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { FieldControl, StatusPill, inputClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "@/components/ui-primitives";
 import { customerEvidenceAccept, sha256File, validateCustomerEvidenceFile } from "@/lib/customer-intake-drafts";
-import { createEvidenceSourceDraft, evidenceConfidenceLevels, evidenceSourceTypes, type EvidenceSourceDraft, type EvidenceSourceRecord } from "@/lib/evidence";
+import { createEvidenceSourceDraft, evidenceConfidenceLevels, evidenceSourceTypes, validateEvidenceSourceDraft, type EvidenceSourceDraft, type EvidenceSourceRecord } from "@/lib/evidence";
 import { supabase } from "@/lib/supabase";
 
 export function EvidenceEditor({ assessmentId, role, sources, onChanged }: {
@@ -43,6 +43,13 @@ export function EvidenceEditor({ assessmentId, role, sources, onChanged }: {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!supabase || !canUpload || !user || (canCurateEvidence && !draft.title.trim()) || (!canCurateEvidence && !file)) return;
+    if (canCurateEvidence) {
+      const validationErrors = validateEvidenceSourceDraft(draft, Boolean(file));
+      if (validationErrors.length > 0) {
+        setError(validationErrors.join(" "));
+        return;
+      }
+    }
     setSaving(true);
     setError("");
     let fileReference = draft.fileReference.trim() || null;
@@ -108,7 +115,9 @@ export function EvidenceEditor({ assessmentId, role, sources, onChanged }: {
       confidence_level: draft.confidenceLevel,
       license_notes: draft.licenseNotes.trim() || null,
       limitation_notes: draft.limitationNotes.trim() || null,
+      notes: draft.notes.trim() || null,
       summary: draft.summary.trim() || null,
+      authored_by: user.id,
     };
     const result = editingId
       ? await supabase.from("evidence_sources").update(payload).eq("id", editingId)
@@ -145,11 +154,17 @@ export function EvidenceEditor({ assessmentId, role, sources, onChanged }: {
                 <FieldControl label="Publisher"><input className={inputClass} value={draft.publisher} onChange={(event) => update("publisher", event.target.value)} /></FieldControl>
                 <FieldControl label="Confidence"><select className={inputClass} value={draft.confidenceLevel} onChange={(event) => update("confidenceLevel", event.target.value as EvidenceSourceDraft["confidenceLevel"])}>{evidenceConfidenceLevels.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></FieldControl>
                 <FieldControl label="Source URL"><input className={inputClass} type="url" value={draft.url} onChange={(event) => update("url", event.target.value)} /></FieldControl>
+                <FieldControl label="Access date"><input className={inputClass} type="date" value={draft.accessedAt} onChange={(event) => update("accessedAt", event.target.value)} /></FieldControl>
+                <FieldControl label="Publication date"><input className={inputClass} type="date" value={draft.publishedAt} onChange={(event) => update("publishedAt", event.target.value)} /></FieldControl>
               </>
             ) : null}
             <FieldControl label="Evidence file" wide={!canCurateEvidence}><label className={`${secondaryButtonClass} w-full cursor-pointer`}><Upload size={16} />{file?.name || "Choose file"}<input accept={customerEvidenceAccept} className="sr-only" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label></FieldControl>
             <FieldControl label={canCurateEvidence ? "Summary" : "Description"} wide><textarea className={textareaClass} rows={3} value={draft.summary} onChange={(event) => update("summary", event.target.value)} /></FieldControl>
-            {canCurateEvidence ? <FieldControl label="Limitations" wide><textarea className={textareaClass} rows={2} value={draft.limitationNotes} onChange={(event) => update("limitationNotes", event.target.value)} /></FieldControl> : null}
+            {canCurateEvidence ? <>
+              <FieldControl label="Licence / usage notes"><textarea className={textareaClass} rows={2} value={draft.licenseNotes} onChange={(event) => update("licenseNotes", event.target.value)} /></FieldControl>
+              <FieldControl label="Limitations"><textarea className={textareaClass} rows={2} value={draft.limitationNotes} onChange={(event) => update("limitationNotes", event.target.value)} /></FieldControl>
+              <FieldControl label="Analyst notes" wide><textarea className={textareaClass} required rows={2} value={draft.notes} onChange={(event) => update("notes", event.target.value)} /></FieldControl>
+            </> : null}
           </div>
           {error ? <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">{error}</p> : null}
           <button type="submit" disabled={saving || (!canCurateEvidence && !file)} className={`${primaryButtonClass} mt-4`}>{saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} {canCurateEvidence ? "Save evidence" : "Upload file"}</button>
@@ -163,6 +178,10 @@ export function EvidenceEditor({ assessmentId, role, sources, onChanged }: {
               <div className="flex gap-2">{source.file_reference ? <button type="button" className={secondaryButtonClass} onClick={() => void download(source)}><Download size={16} /> File</button> : null}{canCurateEvidence ? <button type="button" className={secondaryButtonClass} onClick={() => edit(source)}><Edit3 size={16} /> Edit</button> : null}</div>
             </div>
             {source.summary ? <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{source.summary}</p> : null}
+            <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
+              {source.publisher || "Publisher not recorded"} · {source.accessed_at ? `Accessed ${source.accessed_at}` : "Access date not recorded"} · metadata v{source.metadata_version ?? 1}
+            </p>
+            {source.limitation_notes ? <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Limitations: {source.limitation_notes}</p> : null}
           </article>
         ))}
       </div>

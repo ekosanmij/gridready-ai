@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ensureCustomerContact,
   ensureCustomerOrganisation,
   normaliseAccountContext,
 } from "@/lib/customer-tenancy";
@@ -49,5 +50,27 @@ describe("customer tenancy contracts", () => {
       p_organisation_name: "Example Energy",
       p_organisation_type: "developer",
     });
+  });
+
+  it("reuses an organisation contact when the email already exists", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { id: "contact-a" }, error: null });
+    const limit = vi.fn().mockReturnValue({ maybeSingle });
+    const ilike = vi.fn().mockReturnValue({ limit });
+    const eqOrganisation = vi.fn().mockReturnValue({ ilike });
+    const select = vi.fn().mockReturnValue({ eq: eqOrganisation });
+    const from = vi.fn().mockReturnValue({ select });
+    const client = { from } as unknown as SupabaseClient;
+
+    await expect(ensureCustomerContact(client, {
+      email: " Requester@Example.com ",
+      name: "Requester",
+      organisationId: "organisation-a",
+      phone: "",
+      roleTitle: "",
+    })).resolves.toEqual({ created: false, id: "contact-a" });
+
+    expect(from).toHaveBeenCalledWith("contacts");
+    expect(eqOrganisation).toHaveBeenCalledWith("organisation_id", "organisation-a");
+    expect(ilike).toHaveBeenCalledWith("email", "requester@example.com");
   });
 });

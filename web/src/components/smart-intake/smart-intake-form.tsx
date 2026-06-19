@@ -24,11 +24,12 @@ import {
   parseOptionalNumber,
   suggestedIntakeStatus,
 } from "@/lib/intake";
+import { getErrorMessage } from "@/lib/errors";
 import {
   IntakeFieldState,
   IntakeRequestType,
 } from "@/lib/intake-request-types";
-import { ensureCustomerOrganisation } from "@/lib/customer-tenancy";
+import { ensureCustomerContact, ensureCustomerOrganisation } from "@/lib/customer-tenancy";
 import {
   customerEvidenceAccept,
   discardCustomerIntakeDraft,
@@ -278,7 +279,7 @@ function SmartIntakeFormContent({
         setDraftError("");
       } catch (recoverError) {
         if (!cancelled) {
-          setDraftError(recoverError instanceof Error ? recoverError.message : "Could not recover the server draft.");
+          setDraftError(getErrorMessage(recoverError, "Could not recover the server draft."));
         }
       } finally {
         if (!cancelled) {
@@ -337,7 +338,7 @@ function SmartIntakeFormContent({
       return saved;
     } catch (saveError) {
       setSavedAt(timestamp);
-      setDraftError(`${saveError instanceof Error ? saveError.message : "Server draft save failed."} A local recovery copy was kept.`);
+      setDraftError(`${getErrorMessage(saveError, "Server draft save failed.")} A local recovery copy was kept.`);
       return null;
     } finally {
       if (showSaving) {
@@ -487,7 +488,7 @@ function SmartIntakeFormContent({
       setSavedAt("");
       setDraftDirty(false);
     } catch (discardError) {
-      setDraftError(discardError instanceof Error ? discardError.message : "Could not discard the draft.");
+      setDraftError(getErrorMessage(discardError, "Could not discard the draft."));
     } finally {
       setSaving(false);
     }
@@ -515,7 +516,7 @@ function SmartIntakeFormContent({
         }, setUploadProgress);
         setDraftFiles((current) => [...current, uploaded]);
       } catch (uploadError) {
-        setDraftError(uploadError instanceof Error ? uploadError.message : `Could not upload ${file.name}.`);
+        setDraftError(getErrorMessage(uploadError, `Could not upload ${file.name}.`));
         break;
       }
     }
@@ -547,7 +548,7 @@ function SmartIntakeFormContent({
       await removeCustomerIntakeFile(supabase, file);
       setDraftFiles((current) => current.filter((item) => item.id !== file.id));
     } catch (removeError) {
-      setDraftError(removeError instanceof Error ? removeError.message : "Could not remove the file.");
+      setDraftError(getErrorMessage(removeError, "Could not remove the file."));
     }
   }
 
@@ -566,7 +567,7 @@ function SmartIntakeFormContent({
           window.localStorage.removeItem(draftKey);
           router.push(`/intake/requests/${submittedAssessmentId}`);
         } catch (linkError) {
-          setError(linkError instanceof Error ? linkError.message : "Could not finish linking the uploaded files.");
+          setError(getErrorMessage(linkError, "Could not finish linking the uploaded files."));
         } finally {
           setSubmitting(false);
         }
@@ -643,22 +644,13 @@ function SmartIntakeFormContent({
         return;
       }
 
-      const { data: contact, error: contactError } = await supabase
-        .from("contacts")
-        .insert({
-          email: form.contactEmail.trim() || null,
-          is_primary: true,
-          name: form.contactName.trim() || form.contactEmail.trim(),
-          organisation_id: organisation.organisationId,
-          phone: form.contactPhone.trim() || null,
-          role_title: form.contactRoleTitle.trim() || null,
-        })
-        .select("id")
-        .single();
-
-      if (contactError) {
-        throw contactError;
-      }
+      const contact = await ensureCustomerContact(supabase, {
+        email: form.contactEmail,
+        name: form.contactName,
+        organisationId: organisation.organisationId,
+        phone: form.contactPhone,
+        roleTitle: form.contactRoleTitle,
+      });
 
       const { data: project, error: projectError } = await supabase
         .from("projects")
@@ -705,9 +697,11 @@ function SmartIntakeFormContent({
         throw siteError;
       }
 
-      const { data: assessment, error: assessmentError } = await supabase
+      const assessmentId = crypto.randomUUID();
+      const { error: assessmentError } = await supabase
         .from("site_assessments")
         .insert({
+          id: assessmentId,
           assessment_name: assessmentName,
           backup_generation_assumptions: form.backupGenerationAssumptions.trim() || null,
           battery_storage_assumptions: form.batteryStorageAssumptions.trim() || null,
@@ -732,32 +726,30 @@ function SmartIntakeFormContent({
           target_load_mw: parseOptionalNumber(form.targetLoadMw),
           water_cooling_notes: form.waterCoolingNotes.trim() || null,
           workload_flexibility_assumptions: form.workloadFlexibilityAssumptions.trim() || null,
-        })
-        .select("id")
-        .single();
+        });
 
       if (assessmentError) {
         throw assessmentError;
       }
 
       await markCustomerIntakeDraftSubmitted(supabase, {
-        assessmentId: assessment.id,
+        assessmentId,
         draftId: persistedDraft.id,
         organisationId: organisation.organisationId,
       });
       setDraftStatus("submitted");
-      setSubmittedAssessmentId(assessment.id);
+      setSubmittedAssessmentId(assessmentId);
 
       await linkCustomerIntakeFiles(supabase, {
-        assessmentId: assessment.id,
+        assessmentId,
         draftId: persistedDraft.id,
         userId: user.id,
       });
 
       window.localStorage.removeItem(draftKey);
-      router.push(`/intake/requests/${assessment.id}`);
+      router.push(`/intake/requests/${assessmentId}`);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Could not submit request.");
+      setError(getErrorMessage(submitError, "Could not submit request."));
     } finally {
       setSaving(false);
       setSubmitting(false);

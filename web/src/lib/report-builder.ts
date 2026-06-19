@@ -103,6 +103,60 @@ export type AssessmentReportExportRecord = {
   updated_at: string;
 };
 
+export type ReportClaimRecord = {
+  authored_by: string | null;
+  claim_text: string;
+  confidence_level: "high" | "low" | "medium" | "unknown";
+  created_at: string;
+  id: string;
+  is_material: boolean;
+  rationale: string | null;
+  report_section_id: string;
+  site_assessment_id: string;
+  support_status: "contradicted" | "mixed" | "not_applicable" | "supported" | "unsupported";
+  updated_at: string;
+};
+
+export type ReportClaimEvidenceLinkRecord = {
+  citation_locator: string | null;
+  created_at: string;
+  evidence_snapshot: Record<string, unknown>;
+  evidence_source_id: string;
+  id: string;
+  link_note: string | null;
+  linked_by: string | null;
+  relationship: "context" | "contradicting" | "supporting";
+  report_claim_id: string;
+};
+
+export type ReportSectionFindingLinkRecord = {
+  created_at: string;
+  finding_id: string;
+  id: string;
+  linked_by: string | null;
+  relationship: "contradicts_section" | "context" | "supports_section";
+  report_section_id: string;
+};
+
+export type PreflightBlocker = {
+  detail?: string;
+  key: string;
+  label: string;
+  remediation?: string;
+};
+
+export type AssessmentPreflightRunRecord = {
+  blockers: PreflightBlocker[];
+  bypassed_blockers: Array<PreflightBlocker & { exception_id: string; exception_reason: string }>;
+  created_at: string;
+  id: string;
+  purpose: "delivery" | "finalization" | "review";
+  run_by: string | null;
+  site_assessment_id: string;
+  status: "blocked" | "passed";
+  warnings: PreflightBlocker[];
+};
+
 export type ReportSectionDraft = {
   content: string;
   status: ReportSectionStatus;
@@ -205,6 +259,16 @@ export function reportSectionStatusLabel(value: string) {
 
 export function reportExportStatusLabel(value: string) {
   return reportExportStatuses.find((status) => status.value === value)?.label ?? value.replaceAll("_", " ");
+}
+
+export function formatEvidenceCitation(source: EvidenceSourceRecord) {
+  const publisher = source.publisher?.trim() || "Publisher not recorded";
+  const date = [
+    source.published_at ? `published ${source.published_at}` : "",
+    source.accessed_at ? `accessed ${source.accessed_at}` : "",
+  ].filter(Boolean).join("; ") || "date not recorded";
+  const location = source.url || source.file_reference || "Location not recorded";
+  return `${source.title} — ${publisher} (${date}). ${location}`;
 }
 
 export function reportStatusTone(value: ReportSectionStatus | ReportExportStatus) {

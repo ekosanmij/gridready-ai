@@ -4,6 +4,7 @@ import {
   formatFileSize,
   validateCustomerEvidenceFile,
 } from "@/lib/customer-intake-drafts";
+import { getErrorMessage } from "@/lib/errors";
 
 describe("customer intake draft and upload contracts", () => {
   it("accepts the documented customer evidence formats", () => {
@@ -23,5 +24,21 @@ describe("customer intake draft and upload contracts", () => {
   it("formats upload sizes for the customer interface", () => {
     expect(formatFileSize(2048)).toBe("2 KB");
     expect(formatFileSize(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+
+  it("surfaces Supabase error objects instead of replacing them with a generic message", () => {
+    expect(getErrorMessage({
+      code: "42501",
+      details: "Failing row violates the customer insert policy.",
+      hint: "Check the active organisation membership.",
+      message: "new row violates row-level security policy",
+    }, "Could not submit request.")).toBe(
+      "new row violates row-level security policy Failing row violates the customer insert policy. Check the active organisation membership. 42501",
+    );
+  });
+
+  it("keeps useful native and fallback error messages", () => {
+    expect(getErrorMessage(new Error("Network request failed"), "Fallback")).toBe("Network request failed");
+    expect(getErrorMessage(null, "Fallback")).toBe("Fallback");
   });
 });
