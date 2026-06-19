@@ -134,6 +134,20 @@ export type StatusHistoryRecord = {
   to_status: AssessmentStatus;
 };
 
+export type AssessmentEventRecord = {
+  actor_role: "admin" | "analyst" | "reviewer" | "customer" | null;
+  created_at: string;
+  event_type: string;
+  from_state: string | null;
+  id: string;
+  metadata: Record<string, unknown>;
+  reason: string | null;
+  source_record_id: string | null;
+  source_table: string | null;
+  to_state: string | null;
+  visibility: "customer" | "internal" | "shared";
+};
+
 export type DuplicateAssessmentSignal = {
   id: string;
   label: string;
@@ -143,6 +157,7 @@ export type DuplicateAssessmentSignal = {
 
 export type AssessmentWorkspaceData = {
   assessment: AssessmentDetailRecord;
+  assessmentEvents: AssessmentEventRecord[];
   duplicateSignals: DuplicateAssessmentSignal[];
   evidenceLinks: FindingEvidenceLinkRecord[];
   evidenceReadiness: EvidenceReadinessSummary;
@@ -504,21 +519,60 @@ export type ActivityItem = {
 };
 
 export function buildActivityItems(data: AssessmentWorkspaceData): ActivityItem[] {
-  const statusItems = data.statusHistory.map((item) => ({
+  const auditedSources = new Set(
+    data.assessmentEvents.flatMap((event) =>
+      event.source_table && event.source_record_id
+        ? [`${event.source_table}:${event.source_record_id}`]
+        : [],
+    ),
+  );
+  const eventItems = data.assessmentEvents.map((event) => {
+    const metadata = event.metadata ?? {};
+    const fileName = typeof metadata.file_name === "string" ? metadata.file_name : null;
+    const assessmentName = typeof metadata.assessment_name === "string" ? metadata.assessment_name : null;
+    const title = event.event_type === "status_changed" && event.to_state
+      ? `${event.from_state ? statusLabel(event.from_state as AssessmentStatus) : "Created"} -> ${statusLabel(event.to_state as AssessmentStatus)}`
+      : event.event_type === "assessment_created"
+        ? `Assessment created${assessmentName ? `: ${assessmentName}` : ""}`
+        : event.event_type === "assignment_changed"
+          ? "Assignment updated"
+          : event.event_type === "note_added"
+            ? `${event.visibility === "internal" ? "Internal" : "Shared"} note added`
+            : event.event_type === "file_uploaded"
+              ? `File uploaded${fileName ? `: ${fileName}` : ""}`
+              : event.event_type.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase());
+
+    return {
+      body: event.reason ?? undefined,
+      id: `event-${event.id}`,
+      timestamp: event.created_at,
+      title,
+      tone: event.event_type === "status_changed" && event.to_state
+        ? lifecycleTone(event.to_state as AssessmentStatus)
+        : event.event_type === "assessment_created"
+          ? "success" as const
+          : event.visibility === "internal"
+            ? "neutral" as const
+            : "info" as const,
+    };
+  });
+  const statusItems = data.statusHistory
+    .filter((item) => !auditedSources.has(`status_history:${item.id}`))
+    .map((item) => ({
     body: item.reason ?? undefined,
     id: `status-${item.id}`,
     timestamp: item.changed_at ?? item.created_at ?? data.assessment.updated_at,
     title: `${item.from_status ? statusLabel(item.from_status) : "Created"} -> ${statusLabel(item.to_status)}`,
     tone: lifecycleTone(item.to_status),
   }));
-  const noteItems = data.notes.map((note) => ({
+  const noteItems = data.notes.filter((note) => !auditedSources.has(`assessment_notes:${note.id}`)).map((note) => ({
     body: note.body,
     id: `note-${note.id}`,
     timestamp: note.created_at,
     title: `${note.is_internal ? "Internal" : "Shared"} note added`,
     tone: note.is_internal ? "neutral" as const : "info" as const,
   }));
-  const fileItems = data.files.map((file) => ({
+  const fileItems = data.files.filter((file) => !auditedSources.has(`uploaded_files:${file.id}`)).map((file) => ({
     body: file.description ?? file.storage_path ?? undefined,
     id: `file-${file.id}`,
     timestamp: file.created_at,
@@ -588,6 +642,7 @@ export function buildActivityItems(data: AssessmentWorkspaceData): ActivityItem[
     : [];
 
   return [
+    ...eventItems,
     ...statusItems,
     ...noteItems,
     ...fileItems,

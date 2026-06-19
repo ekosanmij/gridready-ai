@@ -34,6 +34,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AddressAutocompleteField } from "@/components/address-autocomplete-field";
+import { type AppRole, useAuth } from "@/components/auth/auth-provider";
 import { AddressSuggestion } from "@/lib/address-autocomplete";
 import { SiteMapPanel } from "@/components/site-map-panel";
 import {
@@ -138,6 +139,7 @@ import {
   getIntakeWarnings,
   intakeWizardSteps,
 } from "@/lib/intake-steps";
+import { allowedAssessmentTransitions, transitionAssessmentStatus } from "@/lib/assessment-workflow";
 import {
   AssessmentReportExportRecord,
   AssessmentReportSectionRecord,
@@ -738,6 +740,7 @@ function getDashboardNextAction(assessment: AssessmentListRow, evidenceGapAssess
 }
 
 export function IntakeWorkspace() {
+  const { role: appRole } = useAuth();
   const [mode, setMode] = useState<Mode>("dashboard");
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [assessments, setAssessments] = useState<AssessmentListRow[]>([]);
@@ -1824,7 +1827,6 @@ export function IntakeWorkspace() {
     const assessmentPayload = {
       assessment_name: form.assessmentName.trim() || `${form.siteName.trim()} assessment`,
       market_region: form.marketRegion.trim() || "ERCOT",
-      status: nextStatus,
       target_load_mw: parseOptionalNumber(form.targetLoadMw),
       initial_load_mw: parseOptionalNumber(form.initialLoadMw),
       full_buildout_load_mw: parseOptionalNumber(form.fullBuildoutLoadMw),
@@ -1927,6 +1929,7 @@ export function IntakeWorkspace() {
           .insert({
             project_id: project.id,
             site_id: site.id,
+            status: nextStatus,
             ...assessmentPayload,
           })
           .select("id")
@@ -1935,13 +1938,6 @@ export function IntakeWorkspace() {
         if (assessmentError) {
           throw assessmentError;
         }
-
-        await supabase.from("status_history").insert({
-          site_assessment_id: assessment.id,
-          from_status: null,
-          to_status: nextStatus,
-          reason: "Assessment created from intake form",
-        });
 
         setSuccessMessage("Assessment created.");
         trackWorkflowEvent("assessment_created", {
@@ -1960,8 +1956,6 @@ export function IntakeWorkspace() {
         const projectId = form.projectId;
         const siteId = form.siteId;
         const assessmentId = form.assessmentId;
-        const previousStatus = selectedAssessment?.status ?? "draft";
-
         if (!projectId || !siteId || !assessmentId || !form.organisationId) {
           throw new Error("Cannot edit assessment because one or more record IDs are missing.");
         }
@@ -2059,20 +2053,11 @@ export function IntakeWorkspace() {
           throw assessmentError;
         }
 
-        if (previousStatus !== nextStatus) {
-          await supabase.from("status_history").insert({
-            site_assessment_id: assessmentId,
-            from_status: previousStatus,
-            to_status: nextStatus,
-            reason: "Intake form updated",
-          });
-        }
-
         setSuccessMessage("Assessment updated.");
         trackWorkflowEvent("assessment_intake_updated", {
           assessmentId,
           completenessScore,
-          status: nextStatus,
+          status: selectedAssessment?.status ?? nextStatus,
         });
         showToast({
           title: "Assessment updated",
@@ -2105,34 +2090,29 @@ export function IntakeWorkspace() {
       return;
     }
 
-    setSaving(true);
-    setError("");
-
-    const previousStatus = selectedAssessment.status;
-    const { error: updateError } = await supabase
-      .from("site_assessments")
-      .update({ status: pendingStatus })
-      .eq("id", selectedAssessment.id);
-
-    if (updateError) {
-      setSaving(false);
-      setError(updateError.message);
+    if (pendingStatus === selectedAssessment.status) {
       return;
     }
 
-    if (previousStatus !== pendingStatus) {
-      await supabase.from("status_history").insert({
-        site_assessment_id: selectedAssessment.id,
-        from_status: previousStatus,
-        to_status: pendingStatus,
-        reason: "Workflow status changed in analyst console",
-      });
-    }
+    setSaving(true);
+    setError("");
 
-    setSaving(false);
-    setSuccessMessage("Status updated.");
-    await loadAssessments();
-    await loadDetail(selectedAssessment.id);
+    try {
+      await transitionAssessmentStatus(supabase, {
+        assessmentId: selectedAssessment.id,
+        reason: "Workflow status changed in analyst console",
+        source: "analyst_console",
+        toStatus: pendingStatus,
+      });
+
+      setSuccessMessage("Status updated.");
+      await loadAssessments();
+      await loadDetail(selectedAssessment.id);
+    } catch (updateError) {
+      setError(getErrorMessage(updateError));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function addNote(event: FormEvent<HTMLFormElement>) {
@@ -3056,6 +3036,7 @@ export function IntakeWorkspace() {
 
         {mode === "detail" && selectedAssessment ? (
           <AssessmentDetailPanel
+            appRole={appRole}
             assessment={selectedAssessment}
             assessmentFindings={assessmentFindings}
             assessmentScores={assessmentScores}
@@ -4760,6 +4741,7 @@ function ToastStack({
 }
 
 function AssessmentCommandHeader({
+  appRole,
   assessment,
   metrics,
   nextAction,
@@ -4772,6 +4754,7 @@ function AssessmentCommandHeader({
   onPendingStatusChange,
   onStatusSave,
 }: {
+  appRole: AppRole;
   assessment: AssessmentDetail;
   metrics: AssessmentMetric[];
   nextAction: AssessmentNextAction;
@@ -4784,6 +4767,11 @@ function AssessmentCommandHeader({
   onPendingStatusChange: (value: AssessmentStatus) => void;
   onStatusSave: () => void;
 }) {
+  const allowedTransitions = new Set(allowedAssessmentTransitions(assessment.status, appRole));
+  const workflowStatusOptions = assessmentStatuses.filter(
+    (status) => status.value === assessment.status || allowedTransitions.has(status.value),
+  );
+
   return (
     <div className="grid gap-5 p-5 xl:grid-cols-[1.15fr_0.85fr]">
       <div className="min-w-0">
@@ -4831,7 +4819,7 @@ function AssessmentCommandHeader({
               onChange={(event) => onPendingStatusChange(event.target.value as AssessmentStatus)}
               className={cx(inputClass, "min-w-0 flex-1")}
             >
-              {assessmentStatuses.map((status) => (
+              {workflowStatusOptions.map((status) => (
                 <option key={status.value} value={status.value}>
                   {status.label}
                 </option>
@@ -5095,6 +5083,7 @@ function PanelShell({
 }
 
 function AssessmentDetailPanel({
+  appRole,
   assessment,
   assessmentFindings,
   assessmentScores,
@@ -5189,6 +5178,7 @@ function AssessmentDetailPanel({
   onVerdictSubmit,
   onWorkflowToast,
 }: {
+  appRole: AppRole;
   assessment: AssessmentDetail;
   assessmentFindings: AssessmentFindingRecord[];
   assessmentScores: AssessmentScoreRecord[];
@@ -5576,6 +5566,7 @@ function AssessmentDetailPanel({
 
       <section className={cx(cardClass, "overflow-hidden")}>
         <AssessmentCommandHeader
+          appRole={appRole}
           assessment={assessment}
           metrics={metrics}
           nextAction={nextAction}

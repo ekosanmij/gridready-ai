@@ -748,16 +748,6 @@ function SmartIntakeFormContent({
       setDraftStatus("submitted");
       setSubmittedAssessmentId(assessment.id);
 
-      const { error: historyError } = await supabase.from("status_history").insert({
-        from_status: null,
-        reason: `Assessment created from ${requestType.title}`,
-        site_assessment_id: assessment.id,
-        to_status: nextStatus,
-      });
-      if (historyError) {
-        throw historyError;
-      }
-
       await linkCustomerIntakeFiles(supabase, {
         assessmentId: assessment.id,
         draftId: persistedDraft.id,
