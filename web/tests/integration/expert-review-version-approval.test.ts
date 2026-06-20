@@ -9,6 +9,7 @@ import {
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const migration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260619230000_expert_review_version_approval.sql"), "utf8");
+const assignmentMigration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620120000_expert_review_assignment_checklist.sql"), "utf8");
 
 describe("expert review and report-version approval contracts", () => {
   it("creates a complete review checklist draft in a stable order", () => {
@@ -48,6 +49,27 @@ describe("expert review and report-version approval contracts", () => {
     expect(migration).toContain("Approval requires a completed review checklist.");
     expect(migration).toContain("in ('fail', 'not_checked')");
     expect(migration).toContain("Rejected reviews require a decision reason or reviewer comments.");
+    expect(assignmentMigration).toContain("Only the assigned reviewer can record this decision.");
+    expect(assignmentMigration).toContain("Reviewer assignment cannot change while recording a decision.");
+    expect(assignmentMigration).toContain("expert_review_admin_override");
+  });
+
+  it("enforces the canonical checklist at the database boundary", () => {
+    expect(assignmentMigration).toContain("create table if not exists public.expert_review_checklist_definitions");
+    for (const definition of expertReviewChecklistDefinitions) {
+      expect(assignmentMigration).toContain(`('${definition.key}', '${definition.label}'`);
+    }
+    expect(assignmentMigration).toContain("Expert review checklist contains an unknown item.");
+    expect(assignmentMigration).toContain("Expert review checklist contains duplicate items.");
+    expect(assignmentMigration).toContain("Approval requires every canonical checklist item to be completed without failures.");
+  });
+
+  it("separates report authorship from expert approval", () => {
+    expect(assignmentMigration).toContain("public.current_app_role() not in ('admin', 'analyst')");
+    expect(assignmentMigration).toContain("rename to save_report_claim_unchecked");
+    expect(assignmentMigration).toContain("rename to finalize_assessment_report_unchecked");
+    expect(assignmentMigration).toContain("drop policy if exists report_sections_author_manage");
+    expect(assignmentMigration).toContain("drop policy if exists report_exports_author_manage");
   });
 
   it("versions finalized exports and requires approval for that exact version", () => {

@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   customerEvidenceMaxBytes,
   formatFileSize,
+  linkCustomerIntakeFiles,
   validateCustomerEvidenceFile,
 } from "@/lib/customer-intake-drafts";
 import { getErrorMessage } from "@/lib/errors";
+
+const repositoryRoot = resolve(process.cwd(), "..");
+const securityMigration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620140000_upload_security_metadata.sql"), "utf8");
 
 describe("customer intake draft and upload contracts", () => {
   it("accepts the documented customer evidence formats", () => {
@@ -40,5 +47,26 @@ describe("customer intake draft and upload contracts", () => {
   it("keeps useful native and fallback error messages", () => {
     expect(getErrorMessage(new Error("Network request failed"), "Fallback")).toBe("Network request failed");
     expect(getErrorMessage(null, "Fallback")).toBe("Fallback");
+  });
+
+  it("links submitted files through the controlled server function", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: 2, error: null });
+    const client = { rpc } as unknown as SupabaseClient;
+
+    await linkCustomerIntakeFiles(client, { assessmentId: "assessment-a", draftId: "draft-a" });
+
+    expect(rpc).toHaveBeenCalledWith("link_customer_intake_files", {
+      p_assessment_id: "assessment-a",
+      p_draft_id: "draft-a",
+    });
+  });
+
+  it("keeps upload security state worker-owned and gates private reads", () => {
+    expect(securityMigration).toContain("Upload security metadata is immutable outside the processing worker.");
+    expect(securityMigration).toContain("new.malware_scan_status := 'pending'");
+    expect(securityMigration).toContain("drop policy if exists customer_intake_files_update");
+    expect(securityMigration).toContain("drop policy if exists files_customer_link_update");
+    expect(securityMigration).toContain("f.malware_scan_status = 'clean'");
+    expect(securityMigration).toContain("drop policy if exists customer_assessment_storage_update");
   });
 });

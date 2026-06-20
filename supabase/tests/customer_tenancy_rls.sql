@@ -282,6 +282,34 @@ begin
     raise exception 'Customer A can read internal findings before delivery.';
   end if;
 
+  update public.customer_intake_files
+  set malware_scan_status = 'clean',
+      processing_status = 'ready',
+      checksum_sha256 = repeat('b', 64)
+  where id = 'f8000000-0000-0000-0000-000000000001';
+
+  if exists (
+    select 1 from public.customer_intake_files
+    where id = 'f8000000-0000-0000-0000-000000000001'
+      and (malware_scan_status <> 'pending' or checksum_sha256 <> repeat('a', 64))
+  ) then
+    raise exception 'Customer A changed intake-file security metadata.';
+  end if;
+
+  update public.uploaded_files
+  set malware_scan_status = 'clean',
+      processing_status = 'ready',
+      checksum_sha256 = repeat('b', 64)
+  where customer_intake_file_id = 'f8000000-0000-0000-0000-000000000001';
+
+  if exists (
+    select 1 from public.uploaded_files
+    where customer_intake_file_id = 'f8000000-0000-0000-0000-000000000001'
+      and (malware_scan_status <> 'pending' or checksum_sha256 <> repeat('a', 64))
+  ) then
+    raise exception 'Customer A changed linked-file security metadata.';
+  end if;
+
   denied := false;
   begin
     insert into public.customer_intake_drafts (

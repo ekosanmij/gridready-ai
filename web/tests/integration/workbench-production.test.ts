@@ -11,7 +11,7 @@ describe("production workbench integration contracts", () => {
     expect(canManageAssessments("analyst")).toBe(true);
     expect(canManageAssessments("reviewer")).toBe(false);
     expect(canManageAssessments("customer")).toBe(false);
-    expect(canAuthorReports("reviewer")).toBe(true);
+    expect(canAuthorReports("reviewer")).toBe(false);
     expect(canAuthorReports("customer")).toBe(false);
   });
 
