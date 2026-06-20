@@ -276,35 +276,29 @@ export async function removeCustomerIntakeFile(client: SupabaseClient, file: Cus
   }
 }
 
-export async function markCustomerIntakeDraftSubmitted(
+export async function submitCustomerIntakeDraft(
   client: SupabaseClient,
-  input: { assessmentId: string; draftId: string; organisationId: string },
+  input: {
+    draftId: string;
+    fieldStates: CustomerIntakeDraft["fieldStates"];
+    form: AssessmentFormState;
+    requestType: IntakeRequestTypeId;
+  },
 ) {
-  const { error } = await client
-    .from("customer_intake_drafts")
-    .update({
-      organisation_id: input.organisationId,
-      status: "submitted",
-      submitted_assessment_id: input.assessmentId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", input.draftId);
-  if (error) {
-    throw error;
-  }
-}
-
-export async function linkCustomerIntakeFiles(
-  client: SupabaseClient,
-  input: { assessmentId: string; draftId: string },
-) {
-  const { error } = await client.rpc("link_customer_intake_files", {
-    p_assessment_id: input.assessmentId,
+  const { data, error } = await client.rpc("submit_customer_intake_draft", {
     p_draft_id: input.draftId,
+    p_field_states: input.fieldStates,
+    p_form_data: input.form,
+    p_request_type: input.requestType,
+    p_schema_version: 1,
   });
   if (error) {
     throw error;
   }
+  if (typeof data !== "string" || !data) {
+    throw new Error("The submitted assessment identifier was not returned.");
+  }
+  return data;
 }
 
 export function formatFileSize(sizeBytes: number) {
