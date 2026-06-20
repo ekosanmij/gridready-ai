@@ -59,7 +59,7 @@ import {
   getProject,
   getSite,
   lifecycleTone,
-  workspaceModules,
+  workspaceModulesForRole,
 } from "@/lib/assessment-workspace";
 import {
   AssessmentFindingRecord,
@@ -123,7 +123,8 @@ export function AssessmentWorkspace({
   const pathname = usePathname();
   const router = useRouter();
   const requestedModule = searchParams.get("module") as WorkspaceModuleId | null;
-  const activeModule = workspaceModules.some((module) => module.id === requestedModule) ? requestedModule ?? "overview" : "overview";
+  const visibleModules = workspaceModulesForRole(role === "customer" ? "customer" : "internal");
+  const activeModule = visibleModules.some((module) => module.id === requestedModule) ? requestedModule ?? "overview" : "overview";
 
   useEffect(() => {
     let cancelled = false;
@@ -509,7 +510,7 @@ export function AssessmentWorkspace({
 
         <div className="overflow-x-auto border-b border-[var(--color-border)] px-3 py-2">
           <div className="flex min-w-max gap-1">
-            {workspaceModules.map((module) => {
+            {visibleModules.map((module) => {
               const selected = activeModule === module.id;
 
               return (
@@ -628,14 +629,16 @@ function ContextRail({
         </div>
       </WorkItemPanel>
 
-      <WorkItemPanel title="Assignment controls" eyebrow="Persistent" tone="brand">
-        <AssignmentControls
-          assessmentId={data.assessment.id}
-          role={appRole}
-          value={data.assessment}
-          onSaved={onRefresh}
-        />
-      </WorkItemPanel>
+      {role !== "customer" ? (
+        <WorkItemPanel title="Assignment controls" eyebrow="Persistent" tone="brand">
+          <AssignmentControls
+            assessmentId={data.assessment.id}
+            role={appRole}
+            value={data.assessment}
+            onSaved={onRefresh}
+          />
+        </WorkItemPanel>
+      ) : null}
 
       {role !== "customer" ? (
         <WorkItemPanel title="Workflow status" eyebrow="Controlled transition" tone="info">
@@ -648,7 +651,7 @@ function ContextRail({
         </WorkItemPanel>
       ) : null}
 
-      <SmartAssistant assessment={data.assessment} gridAssets={data.gridAssets} role={appRole} signals={smartSignals} onApplied={onRefresh} />
+      {role !== "customer" ? <SmartAssistant assessment={data.assessment} gridAssets={data.gridAssets} role={appRole} signals={smartSignals} onApplied={onRefresh} /> : null}
 
       <WorkItemPanel title="Recent activity" eyebrow={`${activityItems.length} events`} tone="info">
         <Timeline
@@ -750,6 +753,28 @@ function OverviewModule({
   const evidenceGaps = countEvidenceGaps(data.evidenceReadiness);
   const gates = getDeliveryGates(data);
 
+  if (role === "customer") {
+    return (
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricTile icon={<ClipboardList size={16} />} label="Request status" tone={lifecycleTone(data.assessment.status)} value={lifecycle.customerLabel} />
+          <MetricTile icon={<ShieldCheck size={16} />} label="Intake completeness" tone={data.assessment.intake_completeness_score >= 100 ? "success" : "warning"} value={`${data.assessment.intake_completeness_score}%`} />
+          <MetricTile icon={<FileText size={16} />} label="Your files" tone="info" value={String(data.files.length)} />
+        </div>
+        <WorkItemPanel
+          eyebrow="Customer request"
+          title="What happens next"
+          description={lifecycle.description}
+          tone="brand"
+        >
+          <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
+            GridReady analysts are completing the internal diligence and review workflow. Final report materials will appear through secure delivery when they are approved and issued.
+          </p>
+        </WorkItemPanel>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -760,9 +785,9 @@ function OverviewModule({
       </div>
 
       <WorkItemPanel
-        eyebrow={role === "customer" ? "Customer summary" : "Analyst command center"}
+        eyebrow="Analyst command center"
         title="What needs attention"
-        description={role === "customer" ? "Customer-visible request status and missing inputs." : "Next actions across intake, evidence, scorecard, and report delivery."}
+        description="Next actions across intake, evidence, scorecard, and report delivery."
         tone="brand"
       >
         <div className="grid gap-3 lg:grid-cols-2">

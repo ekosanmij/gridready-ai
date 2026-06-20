@@ -209,6 +209,50 @@ values (
   'RLS fixture creation'
 );
 
+-- Seed analyst work product outside the customer role, then prove that the
+-- customer can still access the request without seeing internal analysis.
+reset role;
+
+insert into public.evidence_sources (
+  id,
+  site_assessment_id,
+  title,
+  source_type,
+  confidence_level
+)
+values (
+  'f9000000-0000-0000-0000-000000000001',
+  'f5000000-0000-0000-0000-000000000001',
+  'Internal RLS fixture evidence',
+  'analyst_derived',
+  'medium'
+);
+
+insert into public.assessment_findings (
+  id,
+  site_assessment_id,
+  module_key,
+  title,
+  finding_type,
+  risk_level,
+  confidence_level,
+  statement,
+  status
+)
+values (
+  'fa000000-0000-0000-0000-000000000001',
+  'f5000000-0000-0000-0000-000000000001',
+  'power_feasibility',
+  'Internal RLS fixture finding',
+  'finding',
+  'high',
+  'medium',
+  'Customer must not see this analyst finding before delivery.',
+  'open'
+);
+
+set local role authenticated;
+
 do $$
 declare
   denied boolean := false;
@@ -220,6 +264,22 @@ begin
 
   if visible_count <> 0 then
     raise exception 'Customer A can read organisation B.';
+  end if;
+
+  select count(*) into visible_count
+  from public.evidence_sources
+  where site_assessment_id = 'f5000000-0000-0000-0000-000000000001';
+
+  if visible_count <> 0 then
+    raise exception 'Customer A can read internal evidence before delivery.';
+  end if;
+
+  select count(*) into visible_count
+  from public.assessment_findings
+  where site_assessment_id = 'f5000000-0000-0000-0000-000000000001';
+
+  if visible_count <> 0 then
+    raise exception 'Customer A can read internal findings before delivery.';
   end if;
 
   denied := false;

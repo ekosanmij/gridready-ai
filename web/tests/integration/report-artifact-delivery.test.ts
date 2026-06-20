@@ -8,6 +8,7 @@ import type { ReportVersionSnapshot } from "@/lib/report-artifacts";
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const migration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620000000_report_artifacts_secure_delivery.sql"), "utf8");
+const immutabilityMigration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620110000_report_artifact_immutability.sql"), "utf8");
 const generationRoute = readFileSync(resolve(repositoryRoot, "web/src/app/api/reports/[assessmentId]/artifacts/route.ts"), "utf8");
 const downloadRoute = readFileSync(resolve(repositoryRoot, "web/src/app/api/report-artifacts/[artifactId]/download/route.ts"), "utf8");
 
@@ -107,6 +108,13 @@ describe("versioned report artifact and delivery contracts", () => {
     expect(migration).toContain("snapshot_checksum text not null");
     expect(migration).toContain("generation_attempts integer not null default 1");
     expect(migration).toContain("Report versions, artifacts and deliveries must be changed through the controlled report artifact workflow.");
+    expect(immutabilityMigration).toContain("drop policy if exists report_artifacts_storage_update");
+    expect(immutabilityMigration).not.toContain("create policy report_artifacts_storage_update");
+    expect(immutabilityMigration).toContain("generation_token is distinct from p_generation_token");
+    expect(immutabilityMigration).toContain("generation_attempts::text || '/%'");
+    expect(generationRoute).toContain("/a${version.generation_attempts}");
+    expect(generationRoute).toContain("upsert: false");
+    expect(generationRoute).toContain("p_generation_token: version.generation_token");
   });
 
   it("requires complete artifacts and a passing delivery preflight", () => {
