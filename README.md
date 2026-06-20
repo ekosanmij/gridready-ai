@@ -25,7 +25,7 @@ This is not yet the full production MVP. The remaining work is tracked in `docs/
 
 Highest-priority remaining work:
 
-- Apply and validate the latest Supabase migrations in the target environment through `20260620140000_upload_security_metadata.sql`.
+- Apply and validate the latest Supabase migrations in the target environment through `20260620150000_atomic_customer_intake_submission.sql`.
 - Run the customer registration -> draft -> upload -> submission -> analyst assessment path against a real migrated Supabase project.
 - Implement administrator workflows for invitations, membership changes, suspension, reassignment, and role-change audit reasons.
 - Complete operational controls: malware scanning worker implementation, document extraction workers, notifications, retention, backup/recovery, observability, and incident-friendly logs.
@@ -140,6 +140,7 @@ Current migration sequence:
 20260620120000_expert_review_assignment_checklist.sql
 20260620130000_report_revision_workflow.sql
 20260620140000_upload_security_metadata.sql
+20260620150000_atomic_customer_intake_submission.sql
 ```
 
 Do not run these directly against production:
@@ -180,7 +181,7 @@ Use the server/database functions rather than writing protected records directly
 - `finalize_assessment_report` for server-controlled final report state.
 - `save_expert_review_packet` for version-bound reviewer assignment, checklist and decisions.
 - `start_report_revision` for a controlled editable successor after requested changes or rejection.
-- `link_customer_intake_files` for server-owned upload linking and security metadata.
+- `submit_customer_intake_draft` for idempotent, transactional draft persistence, tenant provisioning, assessment creation, and file linking.
 - `request_report_artifact_generation`, `complete_report_artifact_generation`, and `fail_report_artifact_generation` for controlled, retryable issued artifacts.
 - `deliver_report_version` and `revoke_report_delivery` for organisation-scoped publication and revocation.
 - `authorize_report_artifact_download` and `record_report_artifact_download` for expiring downloads and audit history.

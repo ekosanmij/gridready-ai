@@ -21,25 +21,21 @@ import {
   blankAssessmentForm,
   calculateCompletenessScore,
   isValidContactEmail,
-  parseOptionalNumber,
-  suggestedIntakeStatus,
 } from "@/lib/intake";
 import { getErrorMessage } from "@/lib/errors";
 import {
   IntakeFieldState,
   IntakeRequestType,
 } from "@/lib/intake-request-types";
-import { ensureCustomerContact, ensureCustomerOrganisation } from "@/lib/customer-tenancy";
 import {
   customerEvidenceAccept,
   discardCustomerIntakeDraft,
   formatFileSize,
-  linkCustomerIntakeFiles,
   listCustomerIntakeFiles,
   loadCustomerIntakeDraft,
-  markCustomerIntakeDraftSubmitted,
   removeCustomerIntakeFile,
   saveCustomerIntakeDraft,
+  submitCustomerIntakeDraft,
   uploadCustomerIntakeFile,
   type CustomerIntakeFile,
 } from "@/lib/customer-intake-drafts";
@@ -560,22 +556,25 @@ function SmartIntakeFormContent({
     event.preventDefault();
 
     if (submittedAssessmentId) {
-      if (supabase && user && draftId) {
-        setSubmitting(true);
-        try {
-          await linkCustomerIntakeFiles(supabase, {
-            assessmentId: submittedAssessmentId,
-            draftId,
-          });
-          window.localStorage.removeItem(draftKey);
-          router.push(`/intake/requests/${submittedAssessmentId}`);
-        } catch (linkError) {
-          setError(getErrorMessage(linkError, "Could not finish linking the uploaded files."));
-        } finally {
-          setSubmitting(false);
-        }
-      } else {
+      if (!supabase || !user || !draftId) {
         router.push(`/intake/requests/${submittedAssessmentId}`);
+        return;
+      }
+      setSubmitting(true);
+      setError("");
+      try {
+        const assessmentId = await submitCustomerIntakeDraft(supabase, {
+          draftId,
+          fieldStates,
+          form,
+          requestType: requestType.id,
+        });
+        window.localStorage.removeItem(draftKey);
+        router.push(`/intake/requests/${assessmentId}`);
+      } catch (submitError) {
+        setError(getErrorMessage(submitError, "Could not verify the submitted request."));
+      } finally {
+        setSubmitting(false);
       }
       return;
     }
@@ -603,150 +602,18 @@ function SmartIntakeFormContent({
     setSaving(true);
     setError("");
 
-    const organisationName = form.organisationName.trim();
-    const projectName = form.projectName.trim() || form.assessmentName.trim() || form.siteName.trim() || requestType.title;
-    const siteName = form.siteName.trim() || form.address.trim() || form.assessmentName.trim() || projectName;
-    const assessmentName = form.assessmentName.trim() || `${siteName} assessment`;
-    const nextStatus = suggestedIntakeStatus(form);
-
     try {
-      const persistedDraft = await persistDraft(false);
-      if (!persistedDraft) {
-        throw new Error("The server draft could not be saved. Submission was stopped to prevent a duplicate assessment.");
-      }
-
-      const organisation = await ensureCustomerOrganisation(supabase, {
-        organisationName,
-        organisationType: form.organisationType || "developer",
+      const submissionDraftId = draftId || crypto.randomUUID();
+      setDraftId(submissionDraftId);
+      const assessmentId = await submitCustomerIntakeDraft(supabase, {
+        draftId: submissionDraftId,
+        fieldStates,
+        form,
+        requestType: requestType.id,
       });
       await reloadAccount();
-
-      const { data: existingAssessment, error: existingAssessmentError } = await supabase
-        .from("site_assessments")
-        .select("id")
-        .eq("customer_intake_draft_id", persistedDraft.id)
-        .maybeSingle();
-      if (existingAssessmentError) {
-        throw existingAssessmentError;
-      }
-      if (existingAssessment?.id) {
-        await markCustomerIntakeDraftSubmitted(supabase, {
-          assessmentId: existingAssessment.id,
-          draftId: persistedDraft.id,
-          organisationId: organisation.organisationId,
-        });
-        setDraftStatus("submitted");
-        setSubmittedAssessmentId(existingAssessment.id);
-        await linkCustomerIntakeFiles(supabase, {
-          assessmentId: existingAssessment.id,
-          draftId: persistedDraft.id,
-        });
-        window.localStorage.removeItem(draftKey);
-        router.push(`/intake/requests/${existingAssessment.id}`);
-        return;
-      }
-
-      const contact = await ensureCustomerContact(supabase, {
-        email: form.contactEmail,
-        name: form.contactName,
-        organisationId: organisation.organisationId,
-        phone: form.contactPhone,
-        roleTitle: form.contactRoleTitle,
-      });
-
-      const { data: project, error: projectError } = await supabase
-        .from("projects")
-        .insert({
-          deadline: form.projectDeadline || null,
-          description: [
-            form.projectDescription.trim(),
-            `Request type: ${requestType.title}`,
-            fieldStateSummary(fieldStates),
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-          lead_contact_id: contact.id,
-          name: projectName,
-          organisation_id: organisation.organisationId,
-          project_type: requestProjectType[requestType.id],
-          status: "active",
-        })
-        .select("id")
-        .single();
-
-      if (projectError) {
-        throw projectError;
-      }
-
-      const { data: site, error: siteError } = await supabase
-        .from("sites")
-        .insert({
-          address: form.address.trim() || null,
-          city: form.city.trim() || null,
-          country: "USA",
-          county: form.county.trim() || null,
-          latitude: parseOptionalNumber(form.latitude),
-          longitude: parseOptionalNumber(form.longitude),
-          organisation_id: organisation.organisationId,
-          parcel_id: form.parcelId.trim() || null,
-          site_name: siteName,
-          state: form.state.trim() || "TX",
-        })
-        .select("id")
-        .single();
-
-      if (siteError) {
-        throw siteError;
-      }
-
-      const assessmentId = crypto.randomUUID();
-      const { error: assessmentError } = await supabase
-        .from("site_assessments")
-        .insert({
-          id: assessmentId,
-          assessment_name: assessmentName,
-          backup_generation_assumptions: form.backupGenerationAssumptions.trim() || null,
-          battery_storage_assumptions: form.batteryStorageAssumptions.trim() || null,
-          confidentiality_status: form.confidentialityStatus,
-          curtailment_willingness: form.curtailmentWillingness || null,
-          customer_intake_draft_id: persistedDraft.id,
-          desired_energization_date: form.desiredEnergizationDate || null,
-          existing_power_quote_summary: form.existingPowerQuoteSummary.trim() || null,
-          existing_studies_summary: form.existingStudiesSummary.trim() || null,
-          full_buildout_load_mw: parseOptionalNumber(form.fullBuildoutLoadMw),
-          initial_load_mw: parseOptionalNumber(form.initialLoadMw),
-          intake_completeness_score: completenessScore,
-          known_substation_or_poi: form.knownSubstationOrPoi.trim() || null,
-          known_tsp: form.knownTsp.trim() || null,
-          known_utility: form.knownUtility.trim() || null,
-          land_control_status: form.landControlStatus.trim() || null,
-          market_region: form.marketRegion.trim() || "ERCOT",
-          project_id: project.id,
-          project_stage: form.projectStage.trim() || null,
-          site_id: site.id,
-          status: nextStatus,
-          target_load_mw: parseOptionalNumber(form.targetLoadMw),
-          water_cooling_notes: form.waterCoolingNotes.trim() || null,
-          workload_flexibility_assumptions: form.workloadFlexibilityAssumptions.trim() || null,
-        });
-
-      if (assessmentError) {
-        throw assessmentError;
-      }
-
-      await markCustomerIntakeDraftSubmitted(supabase, {
-        assessmentId,
-        draftId: persistedDraft.id,
-        organisationId: organisation.organisationId,
-      });
       setDraftStatus("submitted");
       setSubmittedAssessmentId(assessmentId);
-
-      await linkCustomerIntakeFiles(supabase, {
-        assessmentId,
-        draftId: persistedDraft.id,
-      });
-
       window.localStorage.removeItem(draftKey);
       router.push(`/intake/requests/${assessmentId}`);
     } catch (submitError) {
@@ -1233,14 +1100,4 @@ function getMissingItems(form: AssessmentFormState, requestType: IntakeRequestTy
   }
 
   return Array.from(missing);
-}
-
-function fieldStateSummary(fieldStates: Partial<Record<keyof AssessmentFormState, IntakeFieldState>>) {
-  const entries = Object.entries(fieldStates).filter(([, state]) => state && state !== "provided");
-
-  if (entries.length === 0) {
-    return "";
-  }
-
-  return `Field states:\n${entries.map(([field, state]) => `- ${field}: ${state}`).join("\n")}`;
 }

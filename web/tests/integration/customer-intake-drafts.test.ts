@@ -5,13 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   customerEvidenceMaxBytes,
   formatFileSize,
-  linkCustomerIntakeFiles,
+  submitCustomerIntakeDraft,
   validateCustomerEvidenceFile,
 } from "@/lib/customer-intake-drafts";
 import { getErrorMessage } from "@/lib/errors";
+import { blankAssessmentForm } from "@/lib/intake";
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const securityMigration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620140000_upload_security_metadata.sql"), "utf8");
+const submissionMigration = readFileSync(resolve(repositoryRoot, "supabase/migrations/20260620150000_atomic_customer_intake_submission.sql"), "utf8");
+const smartIntakeForm = readFileSync(resolve(repositoryRoot, "web/src/components/smart-intake/smart-intake-form.tsx"), "utf8");
 
 describe("customer intake draft and upload contracts", () => {
   it("accepts the documented customer evidence formats", () => {
@@ -49,16 +52,36 @@ describe("customer intake draft and upload contracts", () => {
     expect(getErrorMessage(null, "Fallback")).toBe("Fallback");
   });
 
-  it("links submitted files through the controlled server function", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: 2, error: null });
+  it("submits the latest draft payload through one server transaction", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: "assessment-a", error: null });
     const client = { rpc } as unknown as SupabaseClient;
 
-    await linkCustomerIntakeFiles(client, { assessmentId: "assessment-a", draftId: "draft-a" });
+    await expect(submitCustomerIntakeDraft(client, {
+      draftId: "draft-a",
+      fieldStates: { siteName: "provided" },
+      form: { ...blankAssessmentForm, organisationName: "Acme", contactEmail: "owner@acme.test" },
+      requestType: "single-site-screen",
+    })).resolves.toBe("assessment-a");
 
-    expect(rpc).toHaveBeenCalledWith("link_customer_intake_files", {
-      p_assessment_id: "assessment-a",
+    expect(rpc).toHaveBeenCalledWith("submit_customer_intake_draft", {
       p_draft_id: "draft-a",
+      p_field_states: { siteName: "provided" },
+      p_form_data: expect.objectContaining({ organisationName: "Acme" }),
+      p_request_type: "single-site-screen",
+      p_schema_version: 1,
     });
+  });
+
+  it("makes submission idempotent and removes the browser-side write chain", () => {
+    expect(submissionMigration).toContain("pg_advisory_xact_lock");
+    expect(submissionMigration).toContain("v_draft.status = 'submitted'");
+    expect(submissionMigration).toContain("return v_draft.submitted_assessment_id");
+    expect(submissionMigration).toContain("perform public.link_customer_intake_files");
+    expect(submissionMigration).toContain("drop policy if exists assessments_customer_create");
+    expect(smartIntakeForm).toContain("submitCustomerIntakeDraft");
+    expect(smartIntakeForm).not.toContain('.from("projects")');
+    expect(smartIntakeForm).not.toContain('.from("sites")');
+    expect(smartIntakeForm).not.toContain('.from("site_assessments")\n        .insert');
   });
 
   it("keeps upload security state worker-owned and gates private reads", () => {

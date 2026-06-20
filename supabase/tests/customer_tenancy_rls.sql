@@ -253,6 +253,150 @@ values (
 
 set local role authenticated;
 
+insert into public.customer_intake_drafts (
+  id, user_id, organisation_id, request_type, form_data, field_states
+) values (
+  'fb000000-0000-0000-0000-000000000001',
+  'f1000000-0000-0000-0000-000000000001',
+  'f0000000-0000-0000-0000-000000000001',
+  'single-site-screen',
+  '{
+    "organisationName":"RLS fixture organisation A",
+    "organisationType":"developer",
+    "contactEmail":"rls-a@example.test",
+    "projectName":"Atomic fixture project",
+    "siteName":"Atomic fixture site",
+    "address":"1 Atomic Way",
+    "state":"TX",
+    "targetLoadMw":"25",
+    "desiredEnergizationDate":"2029-01-01"
+  }'::jsonb,
+  '{"siteName":"provided"}'::jsonb
+);
+
+insert into public.customer_intake_files (
+  id, draft_id, uploaded_by, storage_path, original_filename,
+  mime_type, size_bytes, checksum_sha256
+) values (
+  'fc000000-0000-0000-0000-000000000001',
+  'fb000000-0000-0000-0000-000000000001',
+  'f1000000-0000-0000-0000-000000000001',
+  'drafts/f1000000-0000-0000-0000-000000000001/fb000000-0000-0000-0000-000000000001/evidence.pdf',
+  'atomic-evidence.pdf',
+  'application/pdf',
+  2048,
+  repeat('c', 64)
+);
+
+insert into public.customer_intake_drafts (
+  id, user_id, organisation_id, request_type, form_data, field_states
+) values (
+  'fb000000-0000-0000-0000-000000000002',
+  'f1000000-0000-0000-0000-000000000001',
+  'f0000000-0000-0000-0000-000000000001',
+  'single-site-screen',
+  '{}'::jsonb,
+  '{}'::jsonb
+);
+
+do $$
+declare
+  first_assessment_id uuid;
+  retry_assessment_id uuid;
+  failed boolean := false;
+  visible_count integer;
+begin
+  select public.submit_customer_intake_draft(
+    'fb000000-0000-0000-0000-000000000001',
+    'single-site-screen',
+    '{
+      "organisationName":"RLS fixture organisation A",
+      "organisationType":"developer",
+      "contactEmail":"rls-a@example.test",
+      "projectName":"Atomic fixture project",
+      "siteName":"Atomic fixture site",
+      "address":"1 Atomic Way",
+      "state":"TX",
+      "targetLoadMw":"25",
+      "desiredEnergizationDate":"2029-01-01"
+    }'::jsonb,
+    '{"siteName":"provided"}'::jsonb,
+    1
+  ) into first_assessment_id;
+
+  select public.submit_customer_intake_draft(
+    'fb000000-0000-0000-0000-000000000001',
+    'single-site-screen',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    1
+  ) into retry_assessment_id;
+
+  if first_assessment_id is null or retry_assessment_id is distinct from first_assessment_id then
+    raise exception 'Atomic intake retry did not return the original assessment.';
+  end if;
+
+  select count(*) into visible_count
+  from public.site_assessments
+  where customer_intake_draft_id = 'fb000000-0000-0000-0000-000000000001';
+  if visible_count <> 1 then
+    raise exception 'Atomic intake retry created duplicate assessments.';
+  end if;
+
+  if not exists (
+    select 1 from public.customer_intake_drafts d
+    where d.id = 'fb000000-0000-0000-0000-000000000001'
+      and d.status = 'submitted'
+      and d.submitted_assessment_id = first_assessment_id
+  ) then
+    raise exception 'Atomic intake did not mark the draft submitted.';
+  end if;
+
+  if not exists (
+    select 1 from public.uploaded_files f
+    where f.customer_intake_file_id = 'fc000000-0000-0000-0000-000000000001'
+      and f.site_assessment_id = first_assessment_id
+      and f.malware_scan_status = 'pending'
+  ) then
+    raise exception 'Atomic intake did not link the pending upload.';
+  end if;
+
+  begin
+    perform public.submit_customer_intake_draft(
+      'fb000000-0000-0000-0000-000000000002',
+      'single-site-screen',
+      '{
+        "organisationName":"RLS fixture organisation A",
+        "contactEmail":"rls-a@example.test",
+        "projectName":"Invalid atomic fixture",
+        "siteName":"Invalid atomic site",
+        "targetLoadMw":"not-a-number",
+        "desiredEnergizationDate":"2029-01-01"
+      }'::jsonb,
+      '{}'::jsonb,
+      1
+    );
+  exception when others then
+    failed := true;
+  end;
+
+  if not failed then
+    raise exception 'Invalid atomic intake unexpectedly succeeded.';
+  end if;
+  if not exists (
+    select 1 from public.customer_intake_drafts d
+    where d.id = 'fb000000-0000-0000-0000-000000000002'
+      and d.status = 'active'
+      and d.submitted_assessment_id is null
+  ) or exists (
+    select 1 from public.site_assessments a
+    where a.customer_intake_draft_id = 'fb000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'Failed atomic intake left partial submission state.';
+  end if;
+end;
+$$;
+
 do $$
 declare
   denied boolean := false;
