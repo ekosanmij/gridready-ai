@@ -529,6 +529,10 @@ function SmartIntakeFormContent({
     if (!supabase) {
       return;
     }
+    if (file.malwareScanStatus !== "clean") {
+      setDraftError("This file is unavailable until malware scanning reports a clean result.");
+      return;
+    }
     const { data, error: signedError } = await supabase.storage
       .from("assessment-evidence")
       .createSignedUrl(file.storagePath, 60);
@@ -562,7 +566,6 @@ function SmartIntakeFormContent({
           await linkCustomerIntakeFiles(supabase, {
             assessmentId: submittedAssessmentId,
             draftId,
-            userId: user.id,
           });
           window.localStorage.removeItem(draftKey);
           router.push(`/intake/requests/${submittedAssessmentId}`);
@@ -637,7 +640,6 @@ function SmartIntakeFormContent({
         await linkCustomerIntakeFiles(supabase, {
           assessmentId: existingAssessment.id,
           draftId: persistedDraft.id,
-          userId: user.id,
         });
         window.localStorage.removeItem(draftKey);
         router.push(`/intake/requests/${existingAssessment.id}`);
@@ -743,7 +745,6 @@ function SmartIntakeFormContent({
       await linkCustomerIntakeFiles(supabase, {
         assessmentId,
         draftId: persistedDraft.id,
-        userId: user.id,
       });
 
       window.localStorage.removeItem(draftKey);
@@ -918,9 +919,9 @@ function SmartIntakeFormContent({
                     <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{formatFileSize(file.sizeBytes)} · Processing: {file.processingStatus} · Malware scan: {file.malwareScanStatus}</p>
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <button type="button" className={secondaryButtonClass} onClick={() => void downloadDraftFile(file)}>
+                    <button type="button" className={secondaryButtonClass} disabled={file.malwareScanStatus !== "clean"} onClick={() => void downloadDraftFile(file)}>
                       <Download size={15} />
-                      Open
+                      {file.malwareScanStatus === "clean" ? "Open" : "Scanning"}
                     </button>
                     {draftStatus === "active" ? (
                       <button type="button" className={secondaryButtonClass} onClick={() => void removeDraftFile(file)}>

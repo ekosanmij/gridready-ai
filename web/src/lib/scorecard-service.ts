@@ -102,7 +102,7 @@ export async function saveExpertReview(
         report_export_id: input.reportExportId,
         required_changes: input.draft.requiredChanges.trim() || null,
         review_type: input.review?.review_type ?? "final_report",
-        reviewer_id: input.review?.reviewer_id ?? null,
+        reviewer_id: input.draft.reviewerId || null,
         reviewer_name: input.draft.reviewerName.trim() || null,
         status: input.draft.status,
         trigger_reason: input.draft.triggerReason.trim() || null,

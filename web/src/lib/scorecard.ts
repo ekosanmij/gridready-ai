@@ -243,6 +243,7 @@ export type ExpertReviewDraft = {
   comments: string;
   decisionReason: string;
   requiredChanges: string;
+  reviewerId: string;
   reviewerName: string;
   status: ReviewStatus;
   triggerReason: string;
@@ -302,6 +303,7 @@ export const blankExpertReviewDraft: ExpertReviewDraft = {
   comments: "",
   decisionReason: "",
   requiredChanges: "",
+  reviewerId: "",
   reviewerName: "",
   status: "not_started",
   triggerReason: "",
@@ -374,6 +376,7 @@ export function createExpertReviewDraft(record?: ExpertReviewRecord | null): Exp
         comments: record.comments ?? "",
         decisionReason: record.decision_reason ?? "",
         requiredChanges: record.required_changes ?? "",
+        reviewerId: record.reviewer_id ?? "",
         reviewerName: record.reviewer_name ?? "",
         status: record.status,
         triggerReason: record.trigger_reason ?? "",

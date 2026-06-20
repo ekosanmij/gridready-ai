@@ -139,5 +139,5 @@ export function canManageAssessments(role: AppRole) {
 }
 
 export function canAuthorReports(role: AppRole) {
-  return role === "admin" || role === "analyst" || role === "reviewer";
+  return role === "admin" || role === "analyst";
 }

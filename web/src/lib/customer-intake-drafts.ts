@@ -296,38 +296,14 @@ export async function markCustomerIntakeDraftSubmitted(
 
 export async function linkCustomerIntakeFiles(
   client: SupabaseClient,
-  input: { assessmentId: string; draftId: string; userId: string },
+  input: { assessmentId: string; draftId: string },
 ) {
-  const files = await listCustomerIntakeFiles(client, input.draftId);
-  if (files.length === 0) {
-    return;
-  }
-
-  const { error } = await client.from("uploaded_files").upsert(files.map((file) => ({
-    checksum_sha256: file.checksumSha256,
-    customer_intake_file_id: file.id,
-    document_category: "customer_evidence",
-    file_name: file.originalFilename,
-    malware_scan_status: file.malwareScanStatus,
-    mime_type: file.mimeType,
-    original_filename: file.originalFilename,
-    processing_status: file.processingStatus,
-    retention_state: "active",
-    site_assessment_id: input.assessmentId,
-    size_bytes: file.sizeBytes,
-    storage_path: file.storagePath,
-    uploaded_by: input.userId,
-  })), { onConflict: "customer_intake_file_id" });
+  const { error } = await client.rpc("link_customer_intake_files", {
+    p_assessment_id: input.assessmentId,
+    p_draft_id: input.draftId,
+  });
   if (error) {
     throw error;
-  }
-
-  const { error: updateError } = await client
-    .from("customer_intake_files")
-    .update({ site_assessment_id: input.assessmentId, updated_at: new Date().toISOString() })
-    .eq("draft_id", input.draftId);
-  if (updateError) {
-    throw updateError;
   }
 }
 
