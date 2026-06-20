@@ -7,6 +7,7 @@ export type AssessmentReportVersionRecord = {
   generated_at: string | null;
   generation_attempts: number;
   generation_error: string | null;
+  generation_token?: string;
   id: string;
   organisation_id: string;
   report_export_id: string;

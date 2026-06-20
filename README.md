@@ -135,6 +135,8 @@ Current migration sequence:
 20260619220000_repair_assessment_insert_returning_policy.sql
 20260619230000_expert_review_version_approval.sql
 20260620000000_report_artifacts_secure_delivery.sql
+20260620100000_customer_internal_visibility.sql
+20260620110000_report_artifact_immutability.sql
 ```
 
 Do not run these directly against production:

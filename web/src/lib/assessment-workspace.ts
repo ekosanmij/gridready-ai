@@ -210,6 +210,14 @@ export const workspaceModules: Array<{ id: WorkspaceModuleId; label: string }> =
   { id: "activity", label: "Activity" },
 ];
 
+const customerWorkspaceModuleIds = new Set<WorkspaceModuleId>(["overview", "intake", "evidence", "activity"]);
+
+export function workspaceModulesForRole(role: "customer" | "internal") {
+  return role === "customer"
+    ? workspaceModules.filter((module) => customerWorkspaceModuleIds.has(module.id))
+    : workspaceModules;
+}
+
 export const lifecycleStates: Array<{
   customerLabel: string;
   description: string;

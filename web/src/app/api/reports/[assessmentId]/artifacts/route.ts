@@ -35,6 +35,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ as
   const { assessmentId } = await context.params;
   const body = await request.json().catch(() => ({})) as { exportId?: string; retry?: boolean };
   let reportVersionId = "";
+  let generationToken = "";
 
   try {
     const { data: versionData, error: versionError } = await client
@@ -46,8 +47,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ as
       .single();
     if (versionError) throw versionError;
 
-    const version = versionData as AssessmentReportVersionRecord & { content_snapshot: ReportVersionSnapshot };
+    const version = versionData as AssessmentReportVersionRecord & { content_snapshot: ReportVersionSnapshot; generation_token: string };
     reportVersionId = version.id;
+    generationToken = version.generation_token;
     if (version.status === "ready" || version.status === "delivered") {
       return NextResponse.json({ reportVersion: version, reused: true });
     }
@@ -56,15 +58,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ as
     const mapPng = await generateSiteMapPng(snapshot);
     const reportPdf = await generateReportPdf(snapshot, mapPng);
     const baseName = slug(snapshot.assessment.assessment_name);
-    const folder = `${version.organisation_id}/${assessmentId}/v${version.version_number}`;
+    const folder = `${version.organisation_id}/${assessmentId}/v${version.version_number}/a${version.generation_attempts}`;
     const mapFileName = `${baseName}-v${version.version_number}-site-map.png`;
     const pdfFileName = `${baseName}-v${version.version_number}-report.pdf`;
     const mapPath = `${folder}/${mapFileName}`;
     const pdfPath = `${folder}/${pdfFileName}`;
 
     const [{ error: mapUploadError }, { error: pdfUploadError }] = await Promise.all([
-      client.storage.from("report-artifacts").upload(mapPath, mapPng, { contentType: "image/png", upsert: true }),
-      client.storage.from("report-artifacts").upload(pdfPath, reportPdf, { contentType: "application/pdf", upsert: true }),
+      client.storage.from("report-artifacts").upload(mapPath, mapPng, { contentType: "image/png", upsert: false }),
+      client.storage.from("report-artifacts").upload(pdfPath, reportPdf, { contentType: "application/pdf", upsert: false }),
     ]);
     if (mapUploadError) throw mapUploadError;
     if (pdfUploadError) throw pdfUploadError;
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ as
             storage_path: mapPath,
           },
         ],
+        p_generation_token: version.generation_token,
         p_report_version_id: version.id,
       })
       .single();
@@ -99,9 +102,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ as
     return NextResponse.json({ reportVersion: completedVersion, reused: false });
   } catch (error) {
     const message = errorMessage(error);
-    if (reportVersionId) {
+    if (reportVersionId && generationToken) {
       await client.rpc("fail_report_artifact_generation", {
         p_error: message,
+        p_generation_token: generationToken,
         p_report_version_id: reportVersionId,
       });
     }
