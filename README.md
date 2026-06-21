@@ -28,7 +28,7 @@ Highest-priority remaining work:
 - Apply and validate the latest Supabase migrations in the target environment through `20260620150000_atomic_customer_intake_submission.sql`.
 - Run the customer registration -> draft -> upload -> submission -> analyst assessment path against a real migrated Supabase project.
 - Implement administrator workflows for invitations, membership changes, suspension, reassignment, and role-change audit reasons.
-- Complete operational controls: malware scanning worker implementation, document extraction workers, notifications, retention, backup/recovery, observability, and incident-friendly logs.
+- Deploy and monitor the malware-scanning and document-extraction worker against approved provider adapters; complete notifications, retention, backup/recovery, observability, and incident-friendly logs.
 - Add CI coverage for real database/RLS tests, browser E2E tests, accessibility, performance, and staging release checks.
 - Build portfolio and investor workflows after the single-site path is dependable.
 - Add production analytics for turnaround time, report usefulness, evidence gaps, conversion, and operational quality.
@@ -141,6 +141,7 @@ Current migration sequence:
 20260620130000_report_revision_workflow.sql
 20260620140000_upload_security_metadata.sql
 20260620150000_atomic_customer_intake_submission.sql
+20260621100000_file_processing_workers.sql
 ```
 
 Do not run these directly against production:
@@ -185,6 +186,7 @@ Use the server/database functions rather than writing protected records directly
 - `request_report_artifact_generation`, `complete_report_artifact_generation`, and `fail_report_artifact_generation` for controlled, retryable issued artifacts.
 - `deliver_report_version` and `revoke_report_delivery` for organisation-scoped publication and revocation.
 - `authorize_report_artifact_download` and `record_report_artifact_download` for expiring downloads and audit history.
+- `save_uploaded_file_extraction` and `complete_claimed_background_job` for lease-bound file-worker output.
 
 Direct client writes that bypass these controls should be treated as defects.
 
