@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  Users,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -33,7 +34,7 @@ import {
 import { loadOrganisationChoices, setActiveOrganisation } from "@/lib/customer-tenancy";
 import { supabase } from "@/lib/supabase";
 
-const navigationItems = [
+const baseNavigationItems = [
   { href: "/intake", icon: <Home size={18} />, label: "Home" },
   { href: "/intake/requests/new", icon: <Plus size={18} />, label: "Requests" },
   { href: "/intake/assessments", icon: <ClipboardList size={18} />, label: "Assessments" },
@@ -75,6 +76,9 @@ export function AppShell({
     getServerHydrationSnapshot,
   );
   const displayedTheme = isHydrated ? theme : getThemePreferenceServerSnapshot();
+  const navigationItems = role === "admin"
+    ? [...baseNavigationItems, { href: "/intake/admin/users", icon: <Users size={18} />, label: "Administration" }]
+    : baseNavigationItems;
 
   useEffect(() => {
     applyThemePreference(theme);
